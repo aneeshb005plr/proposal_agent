@@ -1,11 +1,7 @@
 # app/documents/parsers/docx_parser.py
 #
-# DOCX extraction via python-docx. Walks paragraphs and tables in
-# original document order using iter_inner_content(), which returns
-# actual Paragraph/Table objects directly (not raw XML elements) —
-# verified against current python-docx docs. Heading levels are
-# preserved as markdown '#' prefixes, tables converted to markdown
-# syntax. Embedded images are counted, not extracted.
+# Updated: extracts embedded images via doc.part.rels and describes
+# content-bearing ones via vision LLM, same filtering logic as PDF.
 
 import io
 import logging
@@ -15,18 +11,22 @@ from docx.table import Table
 from docx.text.paragraph import Paragraph
 from langchain_core.documents import Document
 
+from app.documents.image_description import describe_image
+from app.documents.image_filter import reset_seen_images, should_describe_image
+
 logger = logging.getLogger("app.documents.parsers.docx")
 
 
-def parse_docx(file_bytes: bytes, filename: str) -> list[Document]:
+async def parse_docx(file_bytes: bytes, filename: str) -> list[Document]:
     """One Document for the whole file."""
     doc = DocxDocument(io.BytesIO(file_bytes))
+    reset_seen_images()
     parts: list[str] = []
 
-    image_count = sum(
-        1 for rel in doc.part.rels.values() if "image" in rel.reltype
-    )
+    described_count = 0
+    skipped_count = 0
 
+    # Walk text/tables in document order first
     for block in doc.iter_inner_content():
         if isinstance(block, Paragraph):
             if not block.text.strip():
@@ -40,9 +40,37 @@ def parse_docx(file_bytes: bytes, filename: str) -> list[Document]:
         elif isinstance(block, Table):
             parts.append(_table_to_markdown(block))
 
-    if image_count:
+    # Images are stored as document relationships, not inline with
+    # paragraphs/tables in python-docx's object model — handled
+    # separately and appended, since precise in-text image position
+    # is not readily available via the public API.
+    for rel in doc.part.rels.values():
+        if "image" not in rel.reltype:
+            continue
+        try:
+            image_bytes = rel.target_part.blob
+            # python-docx does not expose pixel dimensions directly
+            # without decoding the image; use byte size as a coarse
+            # proxy for the area filter — small files are almost
+            # always icons/logos, content images are larger.
+            if len(image_bytes) < 5_000:
+                skipped_count += 1
+                continue
+            if should_describe_image(image_bytes, 9999, 9999):  # bypass
+                # area check since we already filtered by byte size
+                description = await describe_image(image_bytes)
+                parts.append(f"[Image description: {description}]")
+                described_count += 1
+            else:
+                skipped_count += 1
+        except Exception as e:
+            logger.warning("%s: image processing failed: %s", filename, e)
+            skipped_count += 1
+
+    if described_count or skipped_count:
         logger.info(
-            "%s: %d image(s) detected and skipped", filename, image_count
+            "%s: %d image(s) described, %d skipped",
+            filename, described_count, skipped_count,
         )
 
     return [
@@ -51,7 +79,8 @@ def parse_docx(file_bytes: bytes, filename: str) -> list[Document]:
             metadata={
                 "source": filename,
                 "file_type": "docx",
-                "images_skipped": image_count,
+                "images_described": described_count,
+                "images_skipped": skipped_count,
             },
         )
     ]

@@ -1,8 +1,7 @@
 # app/documents/parsers/pptx_parser.py
 #
-# PPTX extraction via python-pptx. One Document per slide, including
-# speaker notes. Tables converted to markdown. Images counted, not
-# extracted.
+# Updated: pictures detected via MSO_SHAPE_TYPE.PICTURE are now
+# extracted and described via vision LLM, same filtering as PDF/DOCX.
 
 import io
 import logging
@@ -11,17 +10,22 @@ from langchain_core.documents import Document
 from pptx import Presentation
 from pptx.enum.shapes import MSO_SHAPE_TYPE
 
+from app.documents.image_description import describe_image
+from app.documents.image_filter import reset_seen_images, should_describe_image
+
 logger = logging.getLogger("app.documents.parsers.pptx")
 
 
-def parse_pptx(file_bytes: bytes, filename: str) -> list[Document]:
+async def parse_pptx(file_bytes: bytes, filename: str) -> list[Document]:
     """One Document per slide."""
     prs = Presentation(io.BytesIO(file_bytes))
+    reset_seen_images()
     documents = []
 
     for i, slide in enumerate(prs.slides):
         text_parts: list[str] = []
-        image_count = 0
+        described_count = 0
+        skipped_count = 0
 
         for shape in slide.shapes:
             if shape.has_text_frame and shape.text_frame.text.strip():
@@ -29,17 +33,32 @@ def parse_pptx(file_bytes: bytes, filename: str) -> list[Document]:
             elif shape.has_table:
                 text_parts.append(_table_to_markdown(shape.table))
             elif shape.shape_type == MSO_SHAPE_TYPE.PICTURE:
-                image_count += 1
+                try:
+                    image_bytes = shape.image.blob
+                    width, height = shape.image.size  # pixel dimensions,
+                    # confirmed available via python-pptx's Image object
+                    if should_describe_image(image_bytes, width, height):
+                        description = await describe_image(image_bytes)
+                        text_parts.append(f"[Image description: {description}]")
+                        described_count += 1
+                    else:
+                        skipped_count += 1
+                except Exception as e:
+                    logger.warning(
+                        "%s slide %d: image processing failed: %s",
+                        filename, i + 1, e,
+                    )
+                    skipped_count += 1
 
         if slide.has_notes_slide:
             notes_text = slide.notes_slide.notes_text_frame.text.strip()
             if notes_text:
                 text_parts.append(f"[Speaker notes: {notes_text}]")
 
-        if image_count:
+        if described_count or skipped_count:
             logger.info(
-                "%s slide %d: %d image(s) detected and skipped",
-                filename, i + 1, image_count,
+                "%s slide %d: %d image(s) described, %d skipped",
+                filename, i + 1, described_count, skipped_count,
             )
 
         documents.append(
@@ -49,7 +68,8 @@ def parse_pptx(file_bytes: bytes, filename: str) -> list[Document]:
                     "source": filename,
                     "file_type": "pptx",
                     "slide": i + 1,
-                    "images_skipped": image_count,
+                    "images_described": described_count,
+                    "images_skipped": skipped_count,
                 },
             )
         )
