@@ -40,7 +40,7 @@ _PARSERS = {
 }
 
 
-def parse_document(file_bytes: bytes, filename: str) -> list[Document]:
+async def parse_document(file_bytes: bytes, filename: str) -> list[Document]:
     """
     Parses raw file bytes into a list of LangChain Document objects.
 
@@ -72,4 +72,4 @@ def parse_document(file_bytes: bytes, filename: str) -> list[Document]:
             f"Supported types: {', '.join(_PARSERS.keys())}"
         )
 
-    return parser_fn(file_bytes, filename)
+    return await parser_fn(file_bytes, filename)

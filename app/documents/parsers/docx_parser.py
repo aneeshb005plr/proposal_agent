@@ -1,15 +1,31 @@
 # app/documents/parsers/docx_parser.py
 #
-# Updated: extracts embedded images via doc.part.rels and describes
-# content-bearing ones via vision LLM, same filtering logic as PDF.
+# DOCX extraction via python-docx. Walks paragraphs and tables in
+# original document order using iter_inner_content(), which returns
+# actual Paragraph/Table objects directly (verified against current
+# python-docx 1.2.0 docs — not raw XML elements needing manual
+# matching against internal attributes).
+#
+# Content-bearing images (charts, diagrams, screenshots) are
+# described via vision LLM and appended to the document text;
+# decorative/repeated images (logos, icons) are filtered out before
+# any LLM call.
+#
+# CORRECTED: pixel dimensions are now obtained via Pillow (real
+# decode of the image blob), replacing an earlier byte-size
+# approximation. python-docx's image relationships expose only raw
+# bytes (rel.target_part.blob) — there is no documented dimension
+# property on that object, so Pillow is the correct, verified way to
+# get real width/height, exactly as established for PPTX.
 
-import io
 import logging
+from io import BytesIO
 
 from docx import Document as DocxDocument
 from docx.table import Table
 from docx.text.paragraph import Paragraph
 from langchain_core.documents import Document
+from PIL import Image as PILImage
 
 from app.documents.image_description import describe_image
 from app.documents.image_filter import reset_seen_images, should_describe_image
@@ -19,14 +35,11 @@ logger = logging.getLogger("app.documents.parsers.docx")
 
 async def parse_docx(file_bytes: bytes, filename: str) -> list[Document]:
     """One Document for the whole file."""
-    doc = DocxDocument(io.BytesIO(file_bytes))
+    doc = DocxDocument(BytesIO(file_bytes))
     reset_seen_images()
     parts: list[str] = []
 
-    described_count = 0
-    skipped_count = 0
-
-    # Walk text/tables in document order first
+    # Walk text/tables in document order
     for block in doc.iter_inner_content():
         if isinstance(block, Paragraph):
             if not block.text.strip():
@@ -42,34 +55,28 @@ async def parse_docx(file_bytes: bytes, filename: str) -> list[Document]:
 
     # Images are stored as document relationships, not inline with
     # paragraphs/tables in python-docx's object model — handled
-    # separately and appended, since precise in-text image position
-    # is not readily available via the public API.
+    # separately and appended at the end. Precise in-text position
+    # is not readily available via the public API, so descriptions
+    # cannot be interleaved at their original location, only appended.
+    described_count = 0
+    skipped_count = 0
     for rel in doc.part.rels.values():
         if "image" not in rel.reltype:
             continue
-        try:
-            image_bytes = rel.target_part.blob
-            # python-docx does not expose pixel dimensions directly
-            # without decoding the image; use byte size as a coarse
-            # proxy for the area filter — small files are almost
-            # always icons/logos, content images are larger.
-            if len(image_bytes) < 5_000:
-                skipped_count += 1
-                continue
-            if should_describe_image(image_bytes, 9999, 9999):  # bypass
-                # area check since we already filtered by byte size
-                description = await describe_image(image_bytes)
-                parts.append(f"[Image description: {description}]")
-                described_count += 1
-            else:
-                skipped_count += 1
-        except Exception as e:
-            logger.warning("%s: image processing failed: %s", filename, e)
+
+        description_text, was_described = await _process_image_relationship(
+            rel, filename
+        )
+        if was_described:
+            parts.append(description_text)
+            described_count += 1
+        else:
             skipped_count += 1
 
     if described_count or skipped_count:
         logger.info(
-            "%s: %d image(s) described, %d skipped",
+            "%s: %d image(s) described, %d skipped "
+            "(decorative/repeated/failed)",
             filename, described_count, skipped_count,
         )
 
@@ -84,6 +91,35 @@ async def parse_docx(file_bytes: bytes, filename: str) -> list[Document]:
             },
         )
     ]
+
+
+async def _process_image_relationship(rel, filename: str) -> tuple[str, bool]:
+    """
+    Extracts an image relationship's bytes, determines real pixel
+    dimensions via Pillow, decides whether it's content-bearing,
+    and if so describes it via vision LLM.
+
+    Returns (description_text, was_described). If was_described is
+    False, description_text is an empty string and the caller should
+    not append it — this keeps the function a pure computation with
+    no side effects on shared state, avoiding the kind of leaked
+    module-level state that would break concurrent document processing.
+    """
+    try:
+        image_bytes = rel.target_part.blob
+
+        with PILImage.open(BytesIO(image_bytes)) as pil_img:
+            width, height = pil_img.size
+
+        if should_describe_image(image_bytes, width, height):
+            description = await describe_image(image_bytes)
+            return f"[Image description: {description}]", True
+        else:
+            return "", False
+
+    except Exception as e:
+        logger.warning("%s: image processing failed: %s", filename, e)
+        return "", False
 
 
 def _table_to_markdown(table: Table) -> str:
