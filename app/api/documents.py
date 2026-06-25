@@ -37,3 +37,21 @@ async def upload_document_route(
         raise HTTPException(status_code=400, detail=str(e))
 
     return result
+
+@router.delete("/{filename}")
+async def delete_document_route(
+    session_id: str,
+    filename: str,
+    db: AsyncDatabase = Depends(get_database),
+):
+    try:
+        result = await submission_service.delete_submission_file(
+            db, session_id, filename
+        )
+    except ValueError:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    if result["chunks_deleted"] == 0:
+        raise HTTPException(status_code=404, detail="File not found in session")
+
+    return result

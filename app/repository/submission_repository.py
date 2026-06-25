@@ -66,6 +66,14 @@ class SubmissionRepository:
         """
         result = await self._collection.delete_many({"session_id": session_id})
         return result.deleted_count
+    
+    async def delete_file_chunks(self, session_id: str, filename: str) -> int:
+        """Removes chunks for one specific file within a session,
+        leaving other files in the session untouched."""
+        result = await self._collection.delete_many(
+            {"session_id": session_id, "filename": filename}
+        )
+        return result.deleted_count
 
     async def get_session_chunks(self, session_id: str) -> list[dict]:
         """
@@ -77,3 +85,5 @@ class SubmissionRepository:
         """
         cursor = self._collection.find({"session_id": session_id})
         return await cursor.to_list(length=None)
+    
+    

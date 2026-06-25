@@ -66,6 +66,14 @@ class SessionRepository:
             return_document=True,
         )
         return result["uploaded_file_count"]
+    
+    async def decrement_file_count(self, session_id: str) -> int:
+        result = await self._collection.find_one_and_update(
+            {"_id": ObjectId(session_id)},
+            {"$inc": {"uploaded_file_count": -1}},
+            return_document=True,
+        )
+        return result["uploaded_file_count"]
 
     async def mark_document_confirmed(self, session_id: str) -> None:
         await self._collection.update_one(

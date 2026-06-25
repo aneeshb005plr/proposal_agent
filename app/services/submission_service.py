@@ -100,3 +100,20 @@ async def upload_submission_file(
     await session_repo.increment_file_count(session_id)
 
     return {"filename": filename, "chunks_stored": chunks_stored}
+
+
+async def delete_submission_file(
+    db: AsyncDatabase, session_id: str, filename: str
+) -> dict:
+    session_repo = SessionRepository(db)
+    submission_repo = SubmissionRepository(db)
+
+    session = await session_repo.get_session(session_id)
+    if session is None:
+        raise ValueError(f"Session {session_id} not found")
+
+    deleted_count = await submission_repo.delete_file_chunks(session_id, filename)
+    if deleted_count > 0:
+        await session_repo.decrement_file_count(session_id)
+
+    return {"filename": filename, "chunks_deleted": deleted_count}
