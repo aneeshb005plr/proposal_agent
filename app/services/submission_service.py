@@ -1,14 +1,9 @@
 # app/services/submission_service.py
 #
-# Coordinates the upload flow: enforce file-count limit, apply
-# upload-after-confirmation policy, parse + chunk + embed (reusing
-# the SAME pattern as pipeline.py — embed ourselves, never via
-# MongoDBAtlasVectorSearch.aadd_documents(), for the same cost
-# reason), store via submission_repository.
-#
-# Generic across agents: behavior driven entirely by
-# settings.MAX_UPLOADED_FILES_PER_SESSION and
-# settings.UPLOAD_AFTER_CONFIRMATION_POLICY, not hardcoded logic.
+# Updated: every function now requires and enforces user_id,
+# matching the ownership-checked pattern just established in
+# session_service.py. A user can no longer upload to, or delete
+# from, a session that isn't theirs by guessing/reusing a session_id.
 
 import logging
 
@@ -29,23 +24,25 @@ class UploadLimitExceededError(Exception):
 
 
 async def upload_submission_file(
-    db: AsyncDatabase, session_id: str, filename: str, file_bytes: bytes
+    db: AsyncDatabase,
+    session_id: str,
+    user_id: str,
+    filename: str,
+    file_bytes: bytes,
 ) -> dict:
     """
-    Handles one uploaded file end to end: limit check, policy check,
-    parse, chunk, embed, store. Returns a summary dict.
-
-    Raises UnsupportedFileTypeError (from parser.py — e.g. .doc) or
-    UploadLimitExceededError (session already at
-    MAX_UPLOADED_FILES_PER_SESSION) — callers (the route) translate
-    these into appropriate HTTP responses.
+    Handles one uploaded file end to end. Now requires user_id and
+    verifies ownership via get_owned_session before doing anything
+    else — raises SessionNotFoundError or SessionAccessDeniedError
+    (from session_repository) if the session doesn't exist or isn't
+    owned by this user.
     """
     session_repo = SessionRepository(db)
     submission_repo = SubmissionRepository(db)
 
-    session = await session_repo.get_session(session_id)
-    if session is None:
-        raise ValueError(f"Session {session_id} not found")
+    # Ownership check happens here — raises if not found/not owned,
+    # same as session_service.get_session_or_raise
+    session = await session_repo.get_owned_session(session_id, user_id)
 
     # ── Enforce file limit BEFORE doing any expensive work ──────────
     if session["uploaded_file_count"] >= settings.MAX_UPLOADED_FILES_PER_SESSION:
@@ -65,30 +62,25 @@ async def upload_submission_file(
                 session_id, deleted,
             )
         elif settings.UPLOAD_AFTER_CONFIRMATION_POLICY == "allow":
-            pass  # new file simply joins the active set
+            pass
         else:
             raise RuntimeError(
                 f"Unknown UPLOAD_AFTER_CONFIRMATION_POLICY: "
                 f"{settings.UPLOAD_AFTER_CONFIRMATION_POLICY!r}"
             )
 
-    # ── Parse (reused from the knowledge pipeline, format-agnostic) ─
+    # ── Parse, chunk, embed (unchanged from before) ─────────────────
     parsed_documents = parse_document(file_bytes, filename)
 
     for doc in parsed_documents:
         doc.metadata["session_id"] = session_id
 
-    # ── Chunk (reused — large files genuinely need this; see earlier
-    # decision that exhaustive processing, not similarity search,
-    # consumes these chunks downstream) ──────────────────────────────
     chunks = chunk_documents(parsed_documents)
 
     if not chunks:
         logger.warning("No chunks produced for %s — nothing stored", filename)
         return {"filename": filename, "chunks_stored": 0}
 
-    # ── Embed ourselves — same reasoning as pipeline.py: never let
-    # MongoDBAtlasVectorSearch.aadd_documents() re-embed internally ──
     texts = [chunk.page_content for chunk in chunks]
     vectors = await embeddings.aembed_documents(texts)
     metadatas = [chunk.metadata for chunk in chunks]
@@ -103,17 +95,33 @@ async def upload_submission_file(
 
 
 async def delete_submission_file(
-    db: AsyncDatabase, session_id: str, filename: str
+    db: AsyncDatabase, session_id: str, user_id: str, filename: str
 ) -> dict:
+    """
+    Now requires and enforces user_id, same as upload above. Also
+    applies the SAME upload-after-confirmation policy on deletion as
+    on upload — removing evidence from an already-confirmed,
+    already-scored evaluation is exactly as disruptive as adding new
+    evidence, per the reasoning we settled on earlier.
+    """
     session_repo = SessionRepository(db)
     submission_repo = SubmissionRepository(db)
 
-    session = await session_repo.get_session(session_id)
-    if session is None:
-        raise ValueError(f"Session {session_id} not found")
+    session = await session_repo.get_owned_session(session_id, user_id)
 
     deleted_count = await submission_repo.delete_file_chunks(session_id, filename)
+
     if deleted_count > 0:
         await session_repo.decrement_file_count(session_id)
+
+        if session["document_confirmed"]:
+            if settings.UPLOAD_AFTER_CONFIRMATION_POLICY == "invalidate":
+                await session_repo.reset_confirmation(session_id)
+                logger.info(
+                    "Session %s: post-confirmation deletion triggered "
+                    "invalidation (policy=invalidate)", session_id,
+                )
+            # "allow" policy: deletion simply shrinks the active set,
+            # no invalidation — consistent with upload's "allow" branch
 
     return {"filename": filename, "chunks_deleted": deleted_count}
