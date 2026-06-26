@@ -2,21 +2,23 @@
 #
 # Runs after load_session_state, on EVERY turn. Deterministic check
 # FIRST for obvious greetings/farewells/thanks — zero LLM cost. LLM
-# fallback only for ambiguous input, with token usage logged via
-# TokenUsageRepository — consistent with every other LLM-calling
-# node in this graph, so token visibility has no gaps.
+# fallback only for ambiguous input.
 #
-# NOTE: this node currently uses the same llm client as generation
-# nodes. Flagged as a candidate for a cheaper/smaller model if one
-# becomes available via the PwC GenAI shared service — classification
-# is exactly the kind of mechanical task that doesn't need the same
-# model capability as actual reasoning/generation. Not yet acted on
-# pending confirmation a cheaper model option exists.
+# CORRECTED: now passes a small window of recent messages, not just
+# the bare latest message. Found via real testing: a short
+# confirmation-style reply ("yes that's right") was being classified
+# correctly, but only by accident — the low-confidence-defaults-to-
+# task_relevant fallback happened to catch it, not genuine
+# understanding. A terser reply ("yes", one word) could plausibly be
+# misclassified without context. Same fix pattern as
+# recap_and_confirm.py — small window, not full history, consistent
+# with avoiding the unbounded-state-growth failure mode found
+# earlier in this build.
 
 import logging
 import re
 
-from langchain_core.messages import HumanMessage
+from langchain_core.messages import HumanMessage, SystemMessage
 from langgraph.runtime import Runtime
 
 from app.agent.context import AgentContext
@@ -25,6 +27,8 @@ from app.llm import llm
 from app.repository.token_usage_repository import TokenUsageRepository
 
 logger = logging.getLogger("app.agent.nodes.classify_intent")
+
+_RECENT_MESSAGE_WINDOW = 3
 
 _GREETING_PATTERN = re.compile(
     r"^\s*(hi|hello|hey|good morning|good afternoon|good evening)[\s!.,]*$",
@@ -39,16 +43,16 @@ _THANKS_PATTERN = re.compile(
     re.IGNORECASE,
 )
 
-_CLASSIFICATION_PROMPT = """Classify the user's message into exactly one category. Respond with ONLY the category name.
+_CLASSIFICATION_PROMPT = """Classify the user's LATEST message into exactly one category, using the recent conversation below for context (the latest message is the one you're classifying — earlier messages are context only).
 
 Categories:
 - social: greetings, thanks, farewells, small talk unrelated to the task
 - off_topic: a request unrelated to evaluating an RFP/proposal against criteria
-- task_relevant: anything related to providing/confirming evaluation criteria, uploading/referencing a document, or asking about evaluation results
+- task_relevant: anything related to providing/confirming evaluation criteria, uploading/referencing a document, confirming or adjusting something the agent just asked about, or asking about evaluation results
+
+A short reply like "yes", "looks good", or "add X" should be classified based on what it's responding to in the conversation, not in isolation.
 
 If genuinely unsure, respond with task_relevant.
-
-User message: "{message}"
 
 Category:"""
 
@@ -64,20 +68,25 @@ async def classify_intent(
         or _THANKS_PATTERN.match(stripped)
         or _FAREWELL_PATTERN.match(stripped)
     ):
-        # Deterministic match — no LLM call, nothing to log.
+        # Deterministic match — no LLM call, nothing to log. These
+        # patterns are checked on the bare message regardless of
+        # context, since "hi" is "hi" whatever came before it.
         intent = "social"
     else:
-        intent = await _classify_with_llm(stripped, state, runtime)
+        intent = await _classify_with_llm(state, runtime)
 
     logger.info("Classified intent as '%s' for session %s", intent, state["session_id"])
     return {"intent": intent}
 
 
 async def _classify_with_llm(
-    message: str, state: RFPAnalyzerState, runtime: Runtime[AgentContext]
+    state: RFPAnalyzerState, runtime: Runtime[AgentContext]
 ) -> str:
-    prompt = _CLASSIFICATION_PROMPT.format(message=message)
-    response = await llm.ainvoke([HumanMessage(content=prompt)])
+    recent_messages = state["messages"][-_RECENT_MESSAGE_WINDOW:]
+
+    response = await llm.ainvoke(
+        [SystemMessage(content=_CLASSIFICATION_PROMPT)] + recent_messages
+    )
 
     token_repo = TokenUsageRepository(runtime.context.db)
     await token_repo.record_llm_call(
