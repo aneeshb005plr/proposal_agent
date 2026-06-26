@@ -1,19 +1,18 @@
 # app/agent/state.py
 #
-# RFPAnalyzerState — the shared state every node reads from and
-# writes partial updates to. Field-by-field reducer choices follow
-# the confirmed current LangGraph guidance: accumulate only what
-# genuinely needs to grow across turns (messages); everything else
-# is plain overwrite, including workflow position and confirmation
-# flags, which must reflect the CURRENT state, not a history of it.
+# RFPAnalyzerState — shared state every node reads from and writes
+# partial updates to. Reducer choices follow confirmed current
+# LangGraph guidance: Annotated + add_messages for anything that
+# must accumulate across turns; plain overwrite for everything that
+# represents CURRENT position/status, not history.
 #
 # Large content (submission document chunks) is deliberately NOT
 # stored here — only session_id and filenames. The scoring node
-# fetches actual chunk content from submission_chunks by session_id
-# when it runs. This avoids the confirmed real production failure
-# mode where checkpoints balloon in size because raw content was
-# stored directly in state (180KB checkpoints, 400ms+ writes,
-# observed in a real LangGraph production deployment).
+# fetches chunk content from submission_chunks by session_id when
+# it runs. This avoids the confirmed real production failure mode
+# where checkpoints balloon because raw content was stored directly
+# in state (180KB checkpoints, 400ms+ writes, observed in a real
+# LangGraph deployment).
 
 from typing import Annotated, Literal, Optional
 
@@ -29,42 +28,42 @@ Stage = Literal[
     "evaluated",
 ]
 
+Intent = Literal["social", "off_topic", "task_relevant"]
+
 
 class RFPAnalyzerState(TypedDict):
-    # Accumulates — conversation history. Reducer appends, never
-    # overwrites wholesale.
+    # Accumulates — conversation history. Reducer appends.
     messages: Annotated[list[BaseMessage], add_messages]
 
-    # Identity and ownership — populated once at the start of every
-    # turn by load_session_state, from the real MongoDB session
-    # record (the durable source of truth — see session_repository.py)
+    # Identity and ownership — set once at the start of every turn
+    # by load_session_state, sourced from the route layer's already-
+    # verified session_id/user_id (ownership already checked before
+    # the graph is ever invoked — this node does not re-check it).
     session_id: str
     user_id: str
+
+    # Plain overwrite — set by classify_intent, read by the combined
+    # router immediately after.
+    intent: Optional[Intent]
 
     # Plain overwrite — current position in the workflow
     stage: Stage
 
-    # Plain overwrite — criteria text is REPLACED wholesale on a new
-    # submission, never merged/accumulated. A mid-flow change is a
-    # deliberate last-write-wins replacement, not an addition.
+    # Plain overwrite — REPLACED wholesale on a new submission, never
+    # merged. A mid-flow change is a deliberate last-write-wins
+    # replacement, per RFP Analyzer's own stated rule.
     criteria: Optional[str]
     criteria_confirmed: bool
 
-    # Add to RFPAnalyzerState:
-    intent: Optional[Literal["social", "off_topic", "task_relevant"]]
-
-    # Plain overwrite — mirrors the MongoDB session record's
-    # document_confirmed field, kept in state so routing logic can
-    # read it without a DB round-trip on every node
+    # Plain overwrite — mirrors the MongoDB session record so nodes
+    # can read it without a DB round-trip mid-turn.
     document_confirmed: bool
     uploaded_filenames: list[str]
 
     # Plain overwrite — populated only once evaluation actually runs.
-    # None until then, never partially filled.
     scoring_results: Optional[dict]
     executive_summary: Optional[str]
 
     # Plain overwrite — what gets sent back to the caller (Streamlit/
-    # Teams) at the end of this turn. Set by whichever node produced
-    # the user-facing response for this turn.
+    # Teams) at the end of this turn.
     response_to_user: Optional[str]
