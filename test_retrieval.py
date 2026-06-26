@@ -26,4 +26,4 @@ async def test():
 
     await close_mongo_connection(app)
 
-asyncio.run(test())
+asyncio.run(test()) 

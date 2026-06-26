@@ -1,8 +1,25 @@
-from typing import Annotated, Literal, Optional
-from typing_extensions import TypedDict
-from langgraph.graph.message import add_messages
-from langchain_core.messages import BaseMessage
+# app/agent/state.py
+#
+# RFPAnalyzerState — the shared state every node reads from and
+# writes partial updates to. Field-by-field reducer choices follow
+# the confirmed current LangGraph guidance: accumulate only what
+# genuinely needs to grow across turns (messages); everything else
+# is plain overwrite, including workflow position and confirmation
+# flags, which must reflect the CURRENT state, not a history of it.
+#
+# Large content (submission document chunks) is deliberately NOT
+# stored here — only session_id and filenames. The scoring node
+# fetches actual chunk content from submission_chunks by session_id
+# when it runs. This avoids the confirmed real production failure
+# mode where checkpoints balloon in size because raw content was
+# stored directly in state (180KB checkpoints, 400ms+ writes,
+# observed in a real LangGraph production deployment).
 
+from typing import Annotated, Literal, Optional
+
+from langchain_core.messages import BaseMessage
+from langgraph.graph.message import add_messages
+from typing_extensions import TypedDict
 
 Stage = Literal[
     "awaiting_criteria",
@@ -14,31 +31,40 @@ Stage = Literal[
 
 
 class RFPAnalyzerState(TypedDict):
-    # Accumulates — conversation history, never overwritten wholesale
+    # Accumulates — conversation history. Reducer appends, never
+    # overwrites wholesale.
     messages: Annotated[list[BaseMessage], add_messages]
+
+    # Identity and ownership — populated once at the start of every
+    # turn by load_session_state, from the real MongoDB session
+    # record (the durable source of truth — see session_repository.py)
+    session_id: str
+    user_id: str
 
     # Plain overwrite — current position in the workflow
     stage: Stage
 
-    # Plain overwrite — the criteria themselves, as raw user-provided
-    # text/structure. Only replaced wholesale on an explicit new
-    # submission, never merged/accumulated.
+    # Plain overwrite — criteria text is REPLACED wholesale on a new
+    # submission, never merged/accumulated. A mid-flow change is a
+    # deliberate last-write-wins replacement, not an addition.
     criteria: Optional[str]
     criteria_confirmed: bool
 
-    # Plain overwrite — document_confirmed mirrors what's already
-    # tracked in MongoDB (sessions collection) but is kept in graph
-    # state too, since the graph's own routing logic needs to read
-    # it on every turn without a separate DB round-trip per node.
-    document_confirmed: bool
+    # Add to RFPAnalyzerState:
+    intent: Optional[Literal["social", "off_topic", "task_relevant"]]
 
-    # NOT the chunks themselves — just identifiers. Per the confirmed
-    # production lesson: large content must not live in checkpointed
-    # state. The actual submission_chunks are fetched from MongoDB,
-    # by session_id, inside the scoring node only when needed.
-    session_id: str
+    # Plain overwrite — mirrors the MongoDB session record's
+    # document_confirmed field, kept in state so routing logic can
+    # read it without a DB round-trip on every node
+    document_confirmed: bool
     uploaded_filenames: list[str]
 
-    # Plain overwrite — populated only once evaluation actually runs
+    # Plain overwrite — populated only once evaluation actually runs.
+    # None until then, never partially filled.
     scoring_results: Optional[dict]
     executive_summary: Optional[str]
+
+    # Plain overwrite — what gets sent back to the caller (Streamlit/
+    # Teams) at the end of this turn. Set by whichever node produced
+    # the user-facing response for this turn.
+    response_to_user: Optional[str]
