@@ -13,6 +13,8 @@ from app.agent.nodes.classify_intent import classify_intent
 from app.agent.nodes.handle_social import handle_social
 from app.agent.nodes.handle_off_topic import handle_off_topic
 from app.agent.nodes.request_criteria import request_criteria
+from app.agent.nodes.recap_and_confirm import recap_and_confirm
+
 
 
 def route_after_classification(state: RFPAnalyzerState) -> str:
@@ -26,6 +28,7 @@ def route_after_classification(state: RFPAnalyzerState) -> str:
     # silently misrouting, until those nodes are written.
     stage_map = {
         "awaiting_criteria": "request_criteria",
+        "awaiting_criteria_confirmation": "recap_and_confirm",
     }
     next_node = stage_map.get(state["stage"])
     if next_node is None:
@@ -44,6 +47,8 @@ def build_graph(checkpointer):
     builder.add_node("handle_social", handle_social)
     builder.add_node("handle_off_topic", handle_off_topic)
     builder.add_node("request_criteria", request_criteria)
+    builder.add_node("recap_and_confirm", recap_and_confirm)
+
 
     builder.add_edge(START, "load_session_state")
     builder.add_edge("load_session_state", "classify_intent")
@@ -55,11 +60,14 @@ def build_graph(checkpointer):
             "handle_social": "handle_social",
             "handle_off_topic": "handle_off_topic",
             "request_criteria": "request_criteria",
+            "recap_and_confirm": "recap_and_confirm", 
         },
     )
 
     builder.add_edge("handle_social", END)
     builder.add_edge("handle_off_topic", END)
     builder.add_edge("request_criteria", END)
+    builder.add_edge("recap_and_confirm", END)
+
 
     return builder.compile(checkpointer=checkpointer)

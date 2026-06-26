@@ -1,23 +1,19 @@
 # app/services/chat_service.py
 #
-# Two ways to invoke the graph for one chat turn:
-#   send_message       — non-streaming, returns the complete reply
-#   stream_message      — streaming, yields token chunks as they
-#                         arrive (for Streamlit/any real-time UI)
+# Coordinates one chat turn: persist the user's message BEFORE
+# invoking the graph, invoke the graph, persist the assistant's
+# reply AFTER it completes.
 #
-# Both persist chat history the same way: user message BEFORE
-# invoking the graph, assistant reply AFTER it completes — kept
-# consistent between the two paths so history is correct regardless
-# of which one a caller uses.
-#
-# Streaming uses stream_mode="messages" — confirmed current pattern
-# (version="v2", the proven, still-current default as of multiple
-# March/April 2026 sources; v3 exists but adds typed projections we
-# have no current need for — adopting it now would be complexity
-# ahead of actual need).
+# CONFIRMED FIX (see rfp_analyzer_graph_structure.md Section 9 for
+# the full investigation): overwrite fields (stage, criteria, etc.)
+# must NOT be passed on every call — doing so overwrites the
+# checkpoint's real stored value, confirmed via isolated empirical
+# testing. Default values for these fields are only included when
+# graph.aget_state(config) confirms this is a genuinely new thread
+# (snapshot.values == {}) — also confirmed via isolated testing,
+# both sync and async variants.
 
 import logging
-from typing import AsyncIterator
 
 from langchain_core.messages import HumanMessage
 
@@ -27,24 +23,17 @@ from app.repository.message_repository import MessageRepository
 
 logger = logging.getLogger("app.services.chat_service")
 
-
-def _initial_state(session_id: str, user_id: str, message_text: str) -> dict:
-    """Shared initial state builder — used by both send_message and
-    stream_message so they stay consistent with each other."""
-    return {
-        "messages": [HumanMessage(content=message_text)],
-        "session_id": session_id,
-        "user_id": user_id,
-        "stage": "awaiting_criteria",
-        "criteria": None,
-        "criteria_confirmed": False,
-        "document_confirmed": False,
-        "uploaded_filenames": [],
-        "scoring_results": None,
-        "executive_summary": None,
-        "intent": None,
-        "response_to_user": None,
-    }
+_DEFAULT_OVERWRITE_FIELDS = {
+    "stage": "awaiting_criteria",
+    "criteria": None,
+    "criteria_confirmed": False,
+    "document_confirmed": False,
+    "uploaded_filenames": [],
+    "scoring_results": None,
+    "executive_summary": None,
+    "intent": None,
+    "response_to_user": None,
+}
 
 
 async def send_message(
@@ -55,9 +44,27 @@ async def send_message(
     await message_repo.add_message(session_id, user_id, "user", message_text)
 
     graph = build_graph(checkpointer)
+    config = {"configurable": {"thread_id": session_id}}
+
+    # Confirmed via direct testing: snapshot.values == {} (falsy)
+    # for a thread that has never been invoked; populated (truthy)
+    # after a real invocation. This is the correct, verified way to
+    # detect a brand-new thread — NOT inferring it from an unrelated
+    # collection's row count (the earlier, rejected approach).
+    snapshot = await graph.aget_state(config)
+    is_new_thread = not snapshot.values
+
+    base_input = {
+        "messages": [HumanMessage(content=message_text)],
+        "session_id": session_id,
+        "user_id": user_id,
+    }
+    if is_new_thread:
+        base_input.update(_DEFAULT_OVERWRITE_FIELDS)
+
     result = await graph.ainvoke(
-        _initial_state(session_id, user_id, message_text),
-        config={"configurable": {"thread_id": session_id}},
+        base_input,
+        config=config,
         context=AgentContext(db=db),
     )
 
@@ -68,25 +75,38 @@ async def send_message(
 
 async def stream_message(
     db, checkpointer, session_id: str, user_id: str, message_text: str
-) -> AsyncIterator[str]:
+):
     """
-    Streaming — yields token chunks as they arrive. Caller (the
-    route) is responsible for wrapping these into whatever wire
-    format it needs (e.g. SSE "data: ..." framing).
+    Streaming — yields token chunks as they arrive. Same is_new_thread
+    logic as send_message above, applied consistently.
 
-    Persists the user's message BEFORE streaming starts, and the
-    full assembled assistant reply AFTER the stream completes —
-    same persistence guarantee as send_message.
+    KNOWN LIMITATION (confirmed, see graph structure doc Section 7):
+    nodes using with_structured_output (request_criteria,
+    recap_and_confirm) will NOT stream token-by-token — the full
+    response arrives at once for those turns.
     """
     message_repo = MessageRepository(db)
     await message_repo.add_message(session_id, user_id, "user", message_text)
 
     graph = build_graph(checkpointer)
+    config = {"configurable": {"thread_id": session_id}}
+
+    snapshot = await graph.aget_state(config)
+    is_new_thread = not snapshot.values
+
+    base_input = {
+        "messages": [HumanMessage(content=message_text)],
+        "session_id": session_id,
+        "user_id": user_id,
+    }
+    if is_new_thread:
+        base_input.update(_DEFAULT_OVERWRITE_FIELDS)
+
     assembled_reply = ""
 
     async for chunk in graph.astream(
-        _initial_state(session_id, user_id, message_text),
-        config={"configurable": {"thread_id": session_id}},
+        base_input,
+        config=config,
         context=AgentContext(db=db),
         stream_mode="messages",
         version="v2",
