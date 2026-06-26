@@ -1,13 +1,12 @@
 # app/agent/nodes/handle_social.py
 #
 # Handles greetings, thanks, farewells. Deliberately does NOT touch
-# stage, criteria, document_confirmed, or any other workflow field —
-# the formal state machine stays exactly where it was. This is a
-# pure side-conversation response, not a workflow step.
+# stage, criteria, document_confirmed, or any workflow field — the
+# formal state machine stays exactly where it was. Pure side-
+# conversation response, not a workflow step.
 #
-# No LLM call needed — a small set of templated, varied responses is
-# sufficient for this narrow category and avoids spending a model
-# call on something this simple.
+# No LLM call, no db access — small templated response set is
+# sufficient for this narrow category.
 
 import random
 
