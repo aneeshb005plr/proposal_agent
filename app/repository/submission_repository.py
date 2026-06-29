@@ -86,4 +86,13 @@ class SubmissionRepository:
         cursor = self._collection.find({"session_id": session_id})
         return await cursor.to_list(length=None)
     
-    
+    async def get_distinct_filenames(self, session_id: str) -> list[str]:
+        """
+        Returns just the distinct filenames uploaded for this session —
+        NOT full chunk content. Used by request_document to check
+        whether a file has been uploaded and to report which ones, without
+        pulling potentially large chunk documents (each carrying a
+        3072-dim embedding vector) into memory just to answer that.
+        """
+        return await self._collection.distinct("filename", {"session_id": session_id})
+        

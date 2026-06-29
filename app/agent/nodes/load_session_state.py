@@ -12,6 +12,8 @@ from langgraph.runtime import Runtime
 from app.agent.context import AgentContext
 from app.agent.state import RFPAnalyzerState
 from app.repository.session_repository import SessionRepository
+from app.repository.submission_repository import SubmissionRepository
+
 
 logger = logging.getLogger("app.agent.nodes.load_session_state")
 
@@ -22,6 +24,10 @@ async def load_session_state(
     repo = SessionRepository(runtime.context.db)
     session = await repo.get_session(state["session_id"])
 
+    submission_repo = SubmissionRepository(runtime.context.db)
+    filenames = await submission_repo.get_distinct_filenames(state["session_id"])
+
+
     if session is None:
         raise RuntimeError(
             f"load_session_state: session {state['session_id']} not "
@@ -31,4 +37,6 @@ async def load_session_state(
 
     return {
         "document_confirmed": session["document_confirmed"],
+        "uploaded_filenames": filenames,
+
     }
