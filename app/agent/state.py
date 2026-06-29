@@ -60,6 +60,9 @@ class RFPAnalyzerState(TypedDict):
     document_confirmed: bool
     uploaded_filenames: list[str]
 
+    criteria_weights: dict[str, float]   # empty dict if no weighting given
+
+
     # Plain overwrite — populated only once evaluation actually runs.
     scoring_results: Optional[dict]
     executive_summary: Optional[str]

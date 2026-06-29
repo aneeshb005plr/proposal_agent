@@ -29,6 +29,7 @@ _DEFAULT_OVERWRITE_FIELDS = {
     "criteria_confirmed": False,
     "document_confirmed": False,
     "uploaded_filenames": [],
+    "criteria_weights": {},
     "scoring_results": None,
     "executive_summary": None,
     "intent": None,
