@@ -42,6 +42,13 @@ Look at the user's message. Determine:
 
 Respond using the structured format provided."""
 
+class CriterionWeight(BaseModel):
+    """A single criterion-to-weight mapping."""
+    criterion: str = Field(description="The criterion name")
+    weight: float = Field(
+        description="Weight as a fraction, e.g. 0.4 for 40%"
+    )
+
 
 class CriteriaExtraction(BaseModel):
     criteria_found: bool = Field(
@@ -55,9 +62,9 @@ class CriteriaExtraction(BaseModel):
         default=False,
         description="True ONLY if the user explicitly assigned weights/percentages to criteria. False by default — never inferred.",
     )
-    weights: dict[str, float] = Field(
+    weights: list[CriterionWeight] = Field(
         default_factory=dict,
-        description="Criterion name to weight (as a fraction, e.g. 0.4 for 40%), ONLY if has_weighting is True. Empty otherwise.",
+        description="List of criterion/weight pairs, ONLY if has_weighting is True. Empty list otherwise.",
     )
 
 
@@ -109,11 +116,16 @@ async def request_criteria(
             "Criteria extracted for session %s (weighted=%s)",
             state["session_id"], parsed.has_weighting,
         )
+        weights_dict = (
+            {w.criterion: w.weight for w in parsed.weights}
+            if parsed.has_weighting
+            else {}
+        )
         return {
             "criteria": parsed.extracted_criteria,
             "criteria_confirmed": False,
             "stage": "awaiting_criteria_confirmation",
-            "criteria_weights": parsed.weights if parsed.has_weighting else {},
+            "criteria_weights": weights_dict,
             "response_to_user": (
                 f"Got it. Here's what I have for your evaluation criteria:\n\n"
                 f"{parsed.extracted_criteria}\n\n"

@@ -30,6 +30,7 @@ _DEFAULT_OVERWRITE_FIELDS = {
     "document_confirmed": False,
     "uploaded_filenames": [],
     "criteria_weights": {},
+    "validation_violations": [],
     "scoring_results": None,
     "executive_summary": None,
     "intent": None,
@@ -38,7 +39,7 @@ _DEFAULT_OVERWRITE_FIELDS = {
 
 
 async def send_message(
-    db, checkpointer, session_id: str, user_id: str, message_text: str
+    db, sync_db, checkpointer, session_id: str, user_id: str, message_text: str
 ) -> str:
     """Non-streaming — returns the complete reply at once."""
     message_repo = MessageRepository(db)
@@ -66,7 +67,7 @@ async def send_message(
     result = await graph.ainvoke(
         base_input,
         config=config,
-        context=AgentContext(db=db),
+        context=AgentContext(db=db, sync_db=sync_db),
     )
 
     assistant_text = result.get("response_to_user") or ""
@@ -75,7 +76,7 @@ async def send_message(
 
 
 async def stream_message(
-    db, checkpointer, session_id: str, user_id: str, message_text: str
+    db, sync_db, checkpointer, session_id: str, user_id: str, message_text: str
 ):
     """
     Streaming — yields token chunks as they arrive. Same is_new_thread
@@ -108,7 +109,7 @@ async def stream_message(
     async for chunk in graph.astream(
         base_input,
         config=config,
-        context=AgentContext(db=db),
+        context=AgentContext(db=db, sync_db=sync_db),
         stream_mode="messages",
         version="v2",
     ):

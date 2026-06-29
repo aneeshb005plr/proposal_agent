@@ -13,8 +13,11 @@
 from dataclasses import dataclass
 
 from pymongo.asynchronous.database import AsyncDatabase
+from pymongo.synchronous.database import Database
+
 
 
 @dataclass
 class AgentContext:
     db: AsyncDatabase
+    sync_db: Database

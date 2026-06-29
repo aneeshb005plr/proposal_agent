@@ -11,10 +11,11 @@ import logging
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from pymongo.asynchronous.database import AsyncDatabase
+from pymongo.synchronous.database import Database as SyncDatabase
 
 from app.auth.claims_resolver import UserClaims, get_current_user
 from app.checkpointer import get_checkpointer
-from app.database import get_database
+from app.database import get_database,get_sync_database
 from app.repository.session_repository import (
     SessionAccessDeniedError,
     SessionNotFoundError,
@@ -36,6 +37,7 @@ async def send_chat_message(
     session_id: str,
     body: ChatMessageRequest,
     db: AsyncDatabase = Depends(get_database),
+    sync_db: SyncDatabase = Depends(get_sync_database),
     user: UserClaims = Depends(get_current_user),
 ):
     # Ownership check BEFORE invoking the graph at all — same
@@ -49,6 +51,7 @@ async def send_chat_message(
 
     reply = await chat_service.send_message(
         db=db,
+        sync_db=sync_db,
         checkpointer=checkpointer,
         session_id=session_id,
         user_id=user.user_id,

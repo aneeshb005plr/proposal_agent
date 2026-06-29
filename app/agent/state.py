@@ -63,6 +63,10 @@ class RFPAnalyzerState(TypedDict):
     criteria_weights: dict[str, float]   # empty dict if no weighting given
 
 
+    validation_violations: list[dict]   # empty list if none found
+
+
+
     # Plain overwrite — populated only once evaluation actually runs.
     scoring_results: Optional[dict]
     executive_summary: Optional[str]

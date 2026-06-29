@@ -15,6 +15,14 @@ from app.agent.nodes.handle_off_topic import handle_off_topic
 from app.agent.nodes.request_criteria import request_criteria
 from app.agent.nodes.recap_and_confirm import recap_and_confirm
 from app.agent.nodes.request_document import request_document
+from app.agent.nodes.run_evaluation import run_evaluation
+from app.agent.nodes.generate_summary import generate_summary
+from app.agent.nodes.validate_output import validate_output
+from app.agent.nodes.render_output import render_output
+
+
+
+
 
 
 
@@ -58,6 +66,14 @@ def build_graph(checkpointer):
     builder.add_node("request_criteria", request_criteria)
     builder.add_node("recap_and_confirm", recap_and_confirm)
     builder.add_node("request_document", request_document)
+    builder.add_node("run_evaluation", run_evaluation)
+    builder.add_node("generate_summary", generate_summary)
+    builder.add_node("validate_output", validate_output)
+    builder.add_node("render_output", render_output)
+
+
+
+
 
 
 
@@ -80,19 +96,26 @@ def build_graph(checkpointer):
         "request_document",
         route_after_document_check,
         {
-            "run_evaluation": "run_evaluation",   # not written yet —
-                                                    # this will fail until
-                                                    # run_evaluation exists
+            "run_evaluation": "run_evaluation",                                                   
             "wait": END,
         },
     )
 
     
+    builder.add_edge("run_evaluation", "generate_summary")
+    builder.add_edge("generate_summary", "validate_output")
+    builder.add_edge("validate_output", "render_output")
+
+
 
     builder.add_edge("handle_social", END)
     builder.add_edge("handle_off_topic", END)
     builder.add_edge("request_criteria", END)
     builder.add_edge("recap_and_confirm", END)
+    builder.add_edge("render_output", END)
+
+
+
 
 
     return builder.compile(checkpointer=checkpointer)
