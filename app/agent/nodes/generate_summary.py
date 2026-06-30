@@ -1,13 +1,17 @@
 # app/agent/nodes/generate_summary.py
 #
-# UPDATED: now grounds the executive summary in REAL, retrieved
-# tone-of-voice/brand knowledge chunks (already indexed and
-# confirmed working via knowledge_repository.py), rather than only
-# instructing "be neutral and professional" generically. This is
-# the same retrieval-augmented-generation pattern Proposal Content
-# Generator uses for its own drafts — grounding generation in
-# PwC's actual written standard, not just the model's generic sense
-# of "professional."
+# UPDATED: risk words are now injected directly into the generation
+# prompt, so the model avoids them WHILE writing — matching the
+# established pattern from Proposal Content Generator ("compliance
+# is enforced during generation, not after... validation is a
+# lightweight safety net, not the primary enforcement mechanism").
+#
+# CORRECTED from an earlier, wrong design: validate_output firing
+# and surfacing an unexplained word list to the END USER was a
+# mistake — the words are OUR generated text, not the user's
+# responsibility to review. This fix addresses the actual problem
+# at its source (generation) rather than reporting it after the
+# fact as if it were the user's issue to solve.
 
 import logging
 
@@ -16,6 +20,7 @@ from langgraph.runtime import Runtime
 
 from app.agent.context import AgentContext
 from app.agent.state import RFPAnalyzerState
+from app.knowledge.risk_words import get_risk_words
 from app.llm import llm
 from app.repository.token_usage_repository import TokenUsageRepository
 from app.services.knowledge_service import retrieve_relevant_knowledge
@@ -27,16 +32,21 @@ _SYSTEM_PROMPT = """You are writing an Executive Summary for a proposal/RFP eval
 Relevant PwC tone-of-voice and brand writing guidance, retrieved from official sources:
 {knowledge_context}
 
+The following words/phrases are NOT permitted anywhere in your output. Do not use them under any circumstances — rephrase around them entirely:
+{risk_words_list}
+
 You are given the per-criterion scores and rationales below. Write ONE concise paragraph that covers, in this order:
-1. Overall performance
-2. Strongest areas (cite the specific criteria that scored well, with brief reasons)
-3. Most significant gaps (cite the specific criteria that scored poorly or had thin evidence)
-4. Recommended focus areas for improvement
+1. Overall performance (including total score and percentage)
+2. Key strengths (the specific criteria that scored well, with brief reasons)
+3. Key weaknesses (the specific criteria that scored poorly, with brief reasons — distinct from gaps below; weaknesses are areas that were addressed but inadequately)
+4. Major gaps (criteria with little to no evidence found at all)
+5. Recommended focus areas / opportunities for improvement
 
 Rules:
 - Follow the PwC tone-of-voice guidance above for HOW you write this.
 - Remain neutral, objective, and professional throughout.
 - Avoid subjective or emotional language (no words like "impressive", "disappointing", "excellent", "concerning" — describe facts and scores plainly).
+- Do NOT use any of the restricted words/phrases listed above, anywhere in your response.
 - Base everything on the scores and rationales given — do not introduce new claims not supported by them.
 - Write exactly ONE paragraph. No headers, no bullet points, no lists.
 
@@ -85,8 +95,12 @@ async def generate_summary(
         else "(no specific guidance retrieved — use standard professional tone)"
     )
 
+    risk_data = get_risk_words()
+    risk_words_list = ", ".join(f'"{w}"' for w in risk_data.blocked)
+
     prompt = _SYSTEM_PROMPT.format(
         knowledge_context=knowledge_context,
+        risk_words_list=risk_words_list,
         scoring_summary=_format_scoring_for_prompt(scoring_results),
     )
 
