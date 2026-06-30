@@ -74,3 +74,8 @@ class RFPAnalyzerState(TypedDict):
     # Plain overwrite — what gets sent back to the caller (Streamlit/
     # Teams) at the end of this turn.
     response_to_user: Optional[str]
+
+    post_eval_category: Optional[str]
+    post_eval_output_description: Optional[str]
+    post_eval_keep_criteria: Optional[bool]
+    post_eval_keep_criteria_specified: Optional[bool]
