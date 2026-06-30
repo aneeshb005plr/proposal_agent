@@ -385,6 +385,9 @@ async def _evaluate_map_reduce(
             if finding.evidence_found and finding.criterion in evidence_by_criterion:
                 evidence_by_criterion[finding.criterion].append(finding.evidence_summary)
 
+        logger.info("Batch %d findings: %s", batch_index, [f.model_dump() for f in batch_eval.findings])
+
+
     # ── REDUCE ───────────────────────────────────────────────────────
     scores: list[CriterionScore] = []
 

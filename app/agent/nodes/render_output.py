@@ -56,7 +56,11 @@ def _build_violations_notice(violations: list[dict]) -> str:
     lines = ["\n⚠️ The following items were flagged for your review:"]
     for v in violations:
         words = ", ".join(
-            f"\"{m['word']}\"" + (f" (consider: \"{m['suggestion']}\")" if m['suggestion'] else "")
+            f"\"{m['word']}\"" + (
+                f" (consider: \"{m['suggestion']}\")"
+                if m['suggestion']
+                else " (no suggested alternative)"
+            )
             for m in v["matches"]
         )
         lines.append(f"- In {v['source']}: {words}")
