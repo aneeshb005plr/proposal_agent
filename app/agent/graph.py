@@ -29,6 +29,8 @@ from app.agent.nodes.ask_for_clarification import ask_for_clarification
 from app.agent.nodes.handle_criteria_choice import handle_criteria_choice
 
 from app.agent.nodes.classify_mid_flow_intent import classify_mid_flow_intent
+from app.agent.nodes.update_criteria_mid_flow import update_criteria_mid_flow
+
 
 
 
@@ -69,11 +71,11 @@ def route_after_classification(state: RFPAnalyzerState) -> str:
     return next_node
 
 def route_after_mid_flow_classification(state: RFPAnalyzerState) -> str:
-    if state.get("mid_flow_category") == "new_document":
+    category = state.get("mid_flow_category")
+    if category == "new_document":
         return "reset_for_new_document"
-    # on_script or unclear (deliberately fails safe to the stage's
-    # own node rather than a dead-end) — hand off to whichever node
-    # actually owns this stage's real job.
+    if category == "criteria_edit" and state["stage"] == "awaiting_document":
+        return "update_criteria_mid_flow"
     if state["stage"] == "awaiting_criteria_confirmation":
         return "recap_and_confirm"
     return "request_document"
@@ -112,6 +114,8 @@ def build_graph(checkpointer):
     builder.add_node("handle_criteria_choice", handle_criteria_choice)
 
     builder.add_node("classify_mid_flow_intent", classify_mid_flow_intent)
+    builder.add_node("update_criteria_mid_flow", update_criteria_mid_flow)
+
 
 
 
@@ -142,6 +146,8 @@ def build_graph(checkpointer):
             "recap_and_confirm": "recap_and_confirm",
             "request_document": "request_document",
             "reset_for_new_document": "reset_for_new_document",
+            "update_criteria_mid_flow": "update_criteria_mid_flow",
+
         },
     )
 
@@ -185,6 +191,8 @@ def build_graph(checkpointer):
     builder.add_edge("reset_for_new_document", END)
     builder.add_edge("ask_for_clarification", END)
     builder.add_edge("handle_criteria_choice", END)
+    builder.add_edge("update_criteria_mid_flow", END)
+
 
 
 

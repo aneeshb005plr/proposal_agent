@@ -43,14 +43,20 @@ _THANKS_PATTERN = re.compile(
     re.IGNORECASE,
 )
 
-_CLASSIFICATION_PROMPT = """Classify the user's LATEST message into exactly one category, using the recent conversation below for context (the latest message is the one you're classifying — earlier messages are context only).
+_CLASSIFICATION_PROMPT_TEMPLATE = """Classify the user's LATEST message into exactly one category, using the recent conversation below for context (the latest message is the one you're classifying — earlier messages are context only).
+
+The agent is a proposal/RFP evaluation tool. Its current stage in the workflow is: {stage}
+- "awaiting_criteria": expecting the user to provide evaluation criteria (a list of things to score against, e.g. "pricing, timeline")
+- "awaiting_criteria_confirmation": expecting a confirmation or adjustment of proposed criteria
+- "awaiting_document": expecting a document upload acknowledgment
+- "evaluated": expecting a follow-up about a completed evaluation
 
 Categories:
 - social: greetings, thanks, farewells, small talk unrelated to the task
 - off_topic: a request unrelated to evaluating an RFP/proposal against criteria
 - task_relevant: anything related to providing/confirming evaluation criteria, uploading/referencing a document, confirming or adjusting something the agent just asked about, or asking about evaluation results
 
-A short reply like "yes", "looks good", or "add X" should be classified based on what it's responding to in the conversation, not in isolation.
+IMPORTANT: if the latest message plausibly matches what the CURRENT STAGE is expecting (e.g. a list of criteria while awaiting_criteria), classify it task_relevant even if the recent conversation included an unrelated off-topic exchange before it — each message should be judged on its own content first, not on the tone of what came immediately before it.
 
 If genuinely unsure, respond with task_relevant.
 
@@ -83,11 +89,12 @@ async def _classify_with_llm(
     state: RFPAnalyzerState, runtime: Runtime[AgentContext]
 ) -> str:
     recent_messages = state["messages"][-_RECENT_MESSAGE_WINDOW:]
+    system_prompt = _CLASSIFICATION_PROMPT_TEMPLATE.format(stage=state["stage"])
 
     response = await llm.ainvoke(
-        [SystemMessage(content=_CLASSIFICATION_PROMPT)] + recent_messages
+        [SystemMessage(content=system_prompt)] + recent_messages
     )
-
+    
     token_repo = TokenUsageRepository(runtime.context.db)
     await token_repo.record_llm_call(
         session_id=state["session_id"],

@@ -72,24 +72,19 @@ class EvaluationResult(BaseModel):
 
 
 def _parse_criteria_list(criteria_text: str) -> list[str]:
-    """
-    Splits the stored criteria text into individual criterion names.
-    criteria is stored as a cleanly-formatted list (per
-    request_criteria's extraction prompt) — typically markdown-style
-    bullets or a comma-separated line. This is a best-effort plain-
-    text split, not a structured field, since request_criteria
-    deliberately stores criteria as a readable string for display
-    purposes (e.g. recap_and_confirm shows it back to the user
-    verbatim).
-    """
+    """Now also strips numeric list markers ("1. ", "2)", etc.) in
+    addition to bullet characters — belt-and-suspenders fix, kept
+    even though the ID-based matching below is the real fix, since
+    a cleaner criterion name also makes rationale/rendering nicer."""
+    import re
     lines = [
-        line.strip("-•* ").strip()
+        re.sub(r"^[\-\u2022\*\d]+[\.\)]?\s*", "", line).strip()
         for line in criteria_text.splitlines()
-        if line.strip("-•* ").strip()
+        if line.strip()
     ]
+    lines = [l for l in lines if l]
     if len(lines) > 1:
         return lines
-    # Fallback: single line, possibly comma-separated
     return [c.strip() for c in criteria_text.split(",") if c.strip()]
 
 
@@ -229,14 +224,11 @@ async def _evaluate_simple_path(
 
 
 class BatchFinding(BaseModel):
-    criterion: str
-    evidence_found: bool = Field(
-        description="True if this batch contains evidence relevant to this criterion"
+    criterion_id: str = Field(
+        description="The exact ID of the criterion this finding is about, copied VERBATIM from the numbered list given (e.g. 'C1', 'C2') — do not paraphrase or retype the criterion's name here."
     )
-    evidence_summary: str = Field(
-        default="",
-        description="What evidence was found, with specific page/slide/section markers. Empty if evidence_found is False."
-    )
+    evidence_found: bool = Field(...)
+    evidence_summary: str = Field(default="", description="...")
 
 
 class BatchEvaluation(BaseModel):
@@ -245,16 +237,14 @@ class BatchEvaluation(BaseModel):
 
 _MAP_SYSTEM_PROMPT = """You are reviewing ONE SECTION of a larger submission document, looking for evidence relevant to a set of evaluation criteria.
 
-Criteria to look for evidence about:
+Criteria to look for evidence about (use the EXACT ID shown, e.g. "C1", when reporting findings — do not use the criterion name as the ID):
 {criteria_list}
 
 You are given only a PORTION of the document, with page/slide/section markers in brackets. This is not the whole document — only report what THIS portion contains.
 
-For EACH criterion, report:
+For EACH criterion ID, report:
 - Whether this portion contains any relevant evidence
 - If so, summarize it, citing the specific page/slide/section markers from THIS portion
-
-Do not infer or assume anything not explicitly stated in this portion. It is normal and expected for most criteria to have no evidence in any given portion.
 
 Respond using the structured format provided."""
 
@@ -321,6 +311,21 @@ async def _evaluate_map_reduce(
     evidence found in that batch only.
     REDUCE: one call per criterion, synthesizing all batches'
     findings for that criterion into a final score.
+
+    FIXED — root cause of the confirmed 0/10-despite-real-evidence
+    bug: the map step previously matched findings back to criteria
+    by exact string equality (finding.criterion == criterion name).
+    Since criteria_list can retain artifacts like a "1. " numbering
+    prefix (from _parse_criteria_list) while the LLM naturally
+    returns the CLEAN criterion name in its findings, every match
+    silently failed and evidence was dropped for every batch — with
+    no error, no warning, just an empty evidence list at reduce
+    time. Fixed by assigning each criterion a stable, prefix-free ID
+    (C1, C2, ...) that the model is instructed to echo back exactly,
+    decoupling evidence matching from any paraphrase-prone text
+    comparison. A normalized-name fallback plus an explicit warning
+    log are kept as a safety net in case a model ever ignores the
+    ID instruction — so any future mismatch is visible, not silent.
     """
     token_repo = TokenUsageRepository(runtime.context.db)
     batches = _batch_chunks_by_tokens(chunks)
@@ -330,13 +335,23 @@ async def _evaluate_map_reduce(
         len(batches), state["session_id"],
     )
 
+    # Stable ID assignment — the ONLY thing the LLM needs to echo
+    # back exactly. Built once, before any LLM calls.
+    criterion_ids: dict[str, str] = {
+        f"C{i + 1}": criterion for i, criterion in enumerate(criteria_list)
+    }
+    # Reverse lookup used only by the normalized-name fallback below.
+    id_by_normalized_name: dict[str, str] = {
+        criterion.strip().lower(): cid for cid, criterion in criterion_ids.items()
+    }
+    criteria_list_text = "\n".join(f"{cid}: {c}" for cid, c in criterion_ids.items())
+
+    # evidence_by_id[criterion_id] = list of evidence_summary strings
+    # gathered across all batches that found something for that
+    # criterion.
+    evidence_by_id: dict[str, list[str]] = {cid: [] for cid in criterion_ids}
+
     # ── MAP ──────────────────────────────────────────────────────────
-    # evidence_by_criterion[criterion] = list of evidence_summary
-    # strings gathered across all batches that found something.
-    evidence_by_criterion: dict[str, list[str]] = {c: [] for c in criteria_list}
-
-    criteria_list_text = "\n".join(f"- {c}" for c in criteria_list)
-
     for batch_index, batch in enumerate(batches):
         batch_text = "\n\n".join(
             f"[{c.get('page', c.get('slide', 'section'))}] {c['text']}"
@@ -382,17 +397,44 @@ async def _evaluate_map_reduce(
             ])
 
         for finding in batch_eval.findings:
-            if finding.evidence_found and finding.criterion in evidence_by_criterion:
-                evidence_by_criterion[finding.criterion].append(finding.evidence_summary)
+            if not finding.evidence_found:
+                continue
 
-        logger.info("Batch %d findings: %s", batch_index, [f.model_dump() for f in batch_eval.findings])
+            cid = finding.criterion_id if finding.criterion_id in evidence_by_id else None
 
+            if cid is None:
+                # Defensive fallback: the model ignored the ID
+                # instruction and returned something else (possibly
+                # the criterion's plain name). Try a normalized-name
+                # match before giving up, so evidence isn't dropped
+                # over a trivial case/whitespace mismatch.
+                normalized = finding.criterion_id.strip().lower()
+                cid = id_by_normalized_name.get(normalized)
+
+            if cid is not None:
+                evidence_by_id[cid].append(finding.evidence_summary)
+            else:
+                # Previously this case failed completely silently —
+                # now it's a visible warning instead of a silently
+                # wrong score.
+                logger.warning(
+                    "run_evaluation: batch %d returned unmatchable "
+                    "criterion_id '%s' (evidence_found=True) — "
+                    "evidence DROPPED for session %s. Check MAP "
+                    "prompt/model ID compliance.",
+                    batch_index, finding.criterion_id, state["session_id"],
+                )
+
+        logger.info(
+            "Batch %d findings: %s",
+            batch_index, [f.model_dump() for f in batch_eval.findings],
+        )
 
     # ── REDUCE ───────────────────────────────────────────────────────
     scores: list[CriterionScore] = []
 
-    for criterion in criteria_list:
-        gathered_evidence = evidence_by_criterion.get(criterion, [])
+    for cid, criterion in criterion_ids.items():
+        gathered_evidence = evidence_by_id.get(cid, [])
         evidence_text = (
             "\n".join(f"- {e}" for e in gathered_evidence)
             if gathered_evidence

@@ -24,9 +24,12 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from langgraph.runtime import Runtime
 from pydantic import BaseModel, Field
 
+
 from app.agent.context import AgentContext
+from app.agent.state import RFPAnalyzerState
 from app.llm import llm
 from app.repository.token_usage_repository import TokenUsageRepository
+from app.repository.criteria_upload_repository import CriteriaUploadRepository
 
 logger = logging.getLogger("app.agent.criteria_extraction")
 
@@ -135,3 +138,66 @@ def weights_to_dict(extraction: CriteriaExtraction) -> dict[str, float]:
     if not extraction.has_weighting:
         return {}
     return {w.criterion: w.weight for w in extraction.weights}
+
+
+async def reset_for_criteria_change(
+    state: RFPAnalyzerState, runtime: Runtime[AgentContext]
+) -> dict:
+    last_message = state["messages"][-1].content if state["messages"] else ""
+
+    criteria_upload_repo = CriteriaUploadRepository(runtime.context.db)
+    pending_file_text = await criteria_upload_repo.get_pending_text(
+        state["session_id"]
+    )
+
+    # FIXED: previously only passed last_message, with no knowledge
+    # of the EXISTING confirmed criteria — a request like "also
+    # evaluate against X" would silently overwrite state["criteria"]
+    # down to just the new item, discarding everything previously
+    # confirmed. Explicitly include existing criteria in the input
+    # so the extraction call can genuinely merge, not just replace.
+    combined_chat_text = (
+        f"Existing confirmed criteria:\n{state['criteria']}\n\n"
+        f"Requested change:\n{last_message}"
+    )
+
+    parsed = await extract_criteria(
+        chat_text=combined_chat_text,
+        uploaded_file_text=pending_file_text,
+        session_id=state["session_id"],
+        user_id=state["user_id"],
+        node_name="reset_for_criteria_change",
+        runtime=runtime,
+    )
+
+    if pending_file_text:
+        await criteria_upload_repo.clear_pending_text(state["session_id"])
+
+    if not parsed.criteria_found:
+        return {
+            "response_to_user": (
+                "I wasn't able to identify the updated criteria — "
+                "could you share what you'd like to change?"
+            ),
+        }
+
+    logger.info(
+        "Criteria changed post-evaluation for session %s — prior "
+        "results invalidated", state["session_id"],
+    )
+
+    return {
+        "criteria": parsed.extracted_criteria,
+        "criteria_confirmed": False,
+        "criteria_weights": weights_to_dict(parsed),
+        "scoring_results": None,
+        "executive_summary": None,
+        "stage": "awaiting_criteria_confirmation",
+        "response_to_user": (
+            f"Got it — here's the updated criteria, which will be used "
+            f"to re-evaluate the same document:\n\n"
+            f"{parsed.extracted_criteria}\n\n"
+            f"Does this include everything you want in the evaluation? "
+            f"Let me know if anything needs to be added or adjusted."
+        ),
+    }

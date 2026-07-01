@@ -32,19 +32,18 @@ At "awaiting_criteria_confirmation", the user is expected to either confirm the 
 At "awaiting_document", the user is expected to acknowledge they're about to upload, or have just uploaded, a document — this counts as on_script.
 
 Classify the user's most recent message:
-- on_script: normal input for the current stage, as described above.
-- new_document: the user clearly wants to evaluate a DIFFERENT document than whatever is currently in progress (e.g. "actually I have a different proposal").
-- unclear: doesn't clearly fit either — default HERE, not to new_document, unless the message unambiguously signals a different document.
+- on_script: normal input for the current stage.
+- new_document: the user clearly wants to evaluate a DIFFERENT document.
+- criteria_edit: the user wants to ADD/REMOVE/CHANGE evaluation criteria (only meaningful at "awaiting_document" — at "awaiting_criteria_confirmation" this is already on_script, since recap_and_confirm handles it natively).
+- unclear: doesn't clearly fit any of the above.
 
-If category is "new_document": did the user ALREADY specify whether to reuse the same criteria as before, or provide new ones? Set keep_criteria to true (explicitly said to reuse/same criteria), false (explicitly said they want different/new criteria), or leave keep_criteria_specified false if not mentioned at all.
+Default to on_script unless the message clearly signals one of the other categories. Respond using the structured format provided."""
 
-Respond using the structured format provided."""
 
 
 class MidFlowClassification(BaseModel):
-    category: str = Field(
-        description="One of: on_script, new_document, unclear"
-    )
+    category: str = Field(description="One of: on_script, new_document, criteria_edit, unclear")
+
     keep_criteria: bool = Field(
         description="Relevant only if category is new_document. True if user said to reuse same criteria. Ignore if keep_criteria_specified is False."
     )
