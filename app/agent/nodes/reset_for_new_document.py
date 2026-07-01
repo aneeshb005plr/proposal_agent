@@ -24,6 +24,13 @@ async def reset_for_new_document(
     state: RFPAnalyzerState, runtime: Runtime[AgentContext]
 ) -> dict:
     submission_repo = SubmissionRepository(runtime.context.db)
+    if state.get("uploaded_filenames"):
+        logger.warning(
+            "reset_for_new_document: clearing %d existing filename(s) for "
+            "session %s — confirm this is a genuine new-document request, "
+            "not a misclassified follow-up.",
+            len(state["uploaded_filenames"]), state["session_id"],
+        )
     deleted_count = await submission_repo.delete_session_chunks(state["session_id"])
 
     logger.info(
