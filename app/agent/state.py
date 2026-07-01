@@ -77,5 +77,6 @@ class RFPAnalyzerState(TypedDict):
 
     post_eval_category: Optional[str]
     post_eval_output_description: Optional[str]
-    post_eval_keep_criteria: Optional[bool]
-    post_eval_keep_criteria_specified: Optional[bool]
+    keep_criteria: Optional[bool]              # renamed from post_eval_keep_criteria
+    keep_criteria_specified: Optional[bool]    # renamed from post_eval_keep_criteria_specified
+    mid_flow_category: Optional[str]           # new

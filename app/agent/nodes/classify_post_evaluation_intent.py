@@ -108,8 +108,8 @@ async def classify_post_evaluation_intent(
     )
 
     return {
-        "post_eval_category": parsed.category,
-        "post_eval_output_description": parsed.additional_output_description,
-        "post_eval_keep_criteria": parsed.keep_criteria,
-        "post_eval_keep_criteria_specified": parsed.keep_criteria_specified,
-    }
+    "post_eval_category": parsed.category,
+    "post_eval_output_description": parsed.additional_output_description,
+    "keep_criteria": parsed.keep_criteria,
+    "keep_criteria_specified": parsed.keep_criteria_specified,
+}

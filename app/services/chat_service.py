@@ -35,10 +35,11 @@ _DEFAULT_OVERWRITE_FIELDS = {
     "executive_summary": None,
     "intent": None,
     "response_to_user": None,
+    "mid_flow_category": None,
     "post_eval_category": None,
     "post_eval_output_description": None,
-    "post_eval_keep_criteria": None,
-    "post_eval_keep_criteria_specified": None
+    "keep_criteria": None,
+    "keep_criteria_specified": None
 }
 
 

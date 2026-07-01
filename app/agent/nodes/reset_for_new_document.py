@@ -38,8 +38,8 @@ async def reset_for_new_document(
         "document_confirmed": False,
     }
 
-    keep_specified = state.get("post_eval_keep_criteria_specified", False)
-    keep_criteria = state.get("post_eval_keep_criteria", False)
+    keep_specified = state.get("keep_criteria_specified", False)
+    keep_criteria = state.get("keep_criteria", False)
 
     if keep_specified and keep_criteria:
         # User already said to reuse the same criteria — honor it,

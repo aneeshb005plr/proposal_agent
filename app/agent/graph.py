@@ -28,6 +28,9 @@ from app.agent.nodes.reset_for_new_document import reset_for_new_document
 from app.agent.nodes.ask_for_clarification import ask_for_clarification
 from app.agent.nodes.handle_criteria_choice import handle_criteria_choice
 
+from app.agent.nodes.classify_mid_flow_intent import classify_mid_flow_intent
+
+
 
 
 
@@ -52,8 +55,8 @@ def route_after_classification(state: RFPAnalyzerState) -> str:
     # silently misrouting, until those nodes are written.
     stage_map = {
         "awaiting_criteria": "request_criteria",
-        "awaiting_criteria_confirmation": "recap_and_confirm",
-        "awaiting_document": "request_document",  
+        "awaiting_criteria_confirmation": "classify_mid_flow_intent",
+        "awaiting_document": "classify_mid_flow_intent",
         "awaiting_new_document_criteria_choice": "handle_criteria_choice",
         "evaluated": "classify_post_evaluation_intent",
     }
@@ -64,6 +67,16 @@ def route_after_classification(state: RFPAnalyzerState) -> str:
             f"See rfp_analyzer_graph_structure.md for build status."
         )
     return next_node
+
+def route_after_mid_flow_classification(state: RFPAnalyzerState) -> str:
+    if state.get("mid_flow_category") == "new_document":
+        return "reset_for_new_document"
+    # on_script or unclear (deliberately fails safe to the stage's
+    # own node rather than a dead-end) — hand off to whichever node
+    # actually owns this stage's real job.
+    if state["stage"] == "awaiting_criteria_confirmation":
+        return "recap_and_confirm"
+    return "request_document"
 
 def route_after_post_eval_classification(state: RFPAnalyzerState) -> str:
     category_map = {
@@ -98,6 +111,8 @@ def build_graph(checkpointer):
     builder.add_node("ask_for_clarification", ask_for_clarification)
     builder.add_node("handle_criteria_choice", handle_criteria_choice)
 
+    builder.add_node("classify_mid_flow_intent", classify_mid_flow_intent)
+
 
 
 
@@ -114,10 +129,19 @@ def build_graph(checkpointer):
             "handle_social": "handle_social",
             "handle_off_topic": "handle_off_topic",
             "request_criteria": "request_criteria",
-            "recap_and_confirm": "recap_and_confirm",
-            "request_document": "request_document",
+            "classify_mid_flow_intent": "classify_mid_flow_intent",
             "handle_criteria_choice": "handle_criteria_choice",
             "classify_post_evaluation_intent": "classify_post_evaluation_intent",
+        },
+    )
+
+    builder.add_conditional_edges(
+        "classify_mid_flow_intent",
+        route_after_mid_flow_classification,
+        {
+            "recap_and_confirm": "recap_and_confirm",
+            "request_document": "request_document",
+            "reset_for_new_document": "reset_for_new_document",
         },
     )
 
