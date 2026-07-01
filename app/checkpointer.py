@@ -1,23 +1,27 @@
 # app/checkpointer.py
 #
-# CONFIRMED (not just plausible): AsyncMongoDBSaver was removed in
-# langgraph-checkpoint-mongodb v0.3.0. We use the sync MongoDBSaver,
-# with its own dedicated sync MongoClient — separate from our
-# existing AsyncMongoClient (app.state.mongo_client), which remains
-# exclusively for our own repositories.
+# CONFIRMED: AsyncMongoDBSaver was removed in langgraph-checkpoint-
+# mongodb v0.3.0. We use the sync MongoDBSaver, with its own
+# dedicated sync MongoClient — separate from app.state.mongo_client
+# (our existing AsyncMongoClient, used exclusively by our own
+# repositories) and separate from app.state.mongo_sync_db (used
+# exclusively by knowledge_repository.py for vector search).
 #
-# This mirrors the exact same sync/async split already established
-# in app/repository/knowledge_repository.py for MongoDBAtlasVectorSearch
-# — some MongoDB+LangChain/LangGraph integrations require a sync
-# client; we confine that requirement narrowly to where it's
-# actually needed, rather than letting it spread.
+# This is the THIRD MongoDB connection in the app, each confined to
+# exactly one consumer that genuinely requires it — not because we
+# want three connections, but because three different libraries each
+# independently require a sync client for different reasons, and we
+# keep each requirement narrowly scoped rather than sharing one sync
+# client across unrelated concerns.
 #
-# A small, dedicated connection pool (maxPoolSize=5) is used since
-# this client serves only checkpoint reads/writes, not general
-# query traffic.
+# Pattern matches connect_to_mongo(app) in database.py — sets
+# app.state directly, rather than returning values for the caller
+# to assign. Kept consistent rather than introducing a different
+# style for one extra file.
 
 import logging
 
+from fastapi import FastAPI
 from langgraph.checkpoint.mongodb import MongoDBSaver
 from pymongo import MongoClient
 
@@ -26,18 +30,18 @@ from app.config import settings
 logger = logging.getLogger("app.checkpointer")
 
 
-def build_checkpointer() -> tuple[MongoDBSaver, MongoClient]:
+def connect_checkpointer(app: FastAPI) -> None:
     """
-    Returns (checkpointer, sync_client). The caller is responsible
-    for storing sync_client somewhere it can be closed at shutdown
-    (e.g. app.state), same as our other connections.
+    Builds the checkpointer and its dedicated sync MongoClient,
+    storing both on app.state. Called once from the lifespan at
+    startup, alongside connect_to_mongo(app).
 
     No .setup() call needed — MongoDBSaver creates its required
     indexes automatically on construction.
     """
     sync_client = MongoClient(
         settings.MONGODB_URI,
-        maxPoolSize=5,
+        maxPoolSize=5,  # small, dedicated pool — checkpoint traffic only
     )
 
     checkpointer = MongoDBSaver(
@@ -45,5 +49,31 @@ def build_checkpointer() -> tuple[MongoDBSaver, MongoClient]:
         db_name=settings.MONGODB_DB_NAME,
     )
 
+    app.state.checkpointer = checkpointer
+    app.state.checkpointer_sync_client = sync_client
+
     logger.info("MongoDBSaver checkpointer ready (indexes auto-created)")
-    return checkpointer, sync_client
+
+
+def close_checkpointer(app: FastAPI) -> None:
+    """Closes the dedicated sync MongoClient. Called from lifespan shutdown."""
+    sync_client = getattr(app.state, "checkpointer_sync_client", None)
+    if sync_client is not None:
+        sync_client.close()
+        logger.info("Checkpointer sync MongoClient closed")
+
+
+def get_checkpointer(app: FastAPI) -> MongoDBSaver:
+    """
+    Accessor for use when compiling the graph (app/agent/graph.py).
+    Raises clearly if called before connect_checkpointer() has run —
+    same defensive pattern as get_database()/get_sync_database() in
+    database.py.
+    """
+    checkpointer = getattr(app.state, "checkpointer", None)
+    if checkpointer is None:
+        raise RuntimeError(
+            "Checkpointer not initialized. "
+            "connect_checkpointer(app) must run during app startup."
+        )
+    return checkpointer

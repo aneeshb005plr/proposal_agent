@@ -14,6 +14,9 @@ from typing import Optional
 
 from bson import ObjectId
 from pymongo.asynchronous.database import AsyncDatabase
+from datetime import timedelta  # add to existing datetime import line
+
+SESSION_TTL_HOURS = 24
 
 logger = logging.getLogger("app.repository.session_repository")
 
@@ -38,6 +41,20 @@ class SessionRepository:
     def __init__(self, db: AsyncDatabase):
         self._collection = db[SESSIONS_COLLECTION]
 
+    async def ensure_indexes(self) -> None:
+        """
+        Call once at startup, alongside criteria_upload_repo's own
+        index setup. expireAfterSeconds=0 means Mongo expires a
+        document AT the absolute datetime stored in expires_at, not
+        N seconds after insertion. A session gets expires_at unset
+        the moment its first real message arrives (mark_session_active),
+        so only genuinely abandoned, zero-message sessions are ever
+        auto-deleted.
+        """
+        await self._collection.create_index(
+            "expires_at", expireAfterSeconds=0
+        )
+
     async def create_session(self, user_id: str) -> str:
         """Creates a new session owned by user_id. Returns session_id."""
         doc = {
@@ -46,11 +63,30 @@ class SessionRepository:
             "created_at": datetime.now(timezone.utc),
             "document_confirmed": False,
             "uploaded_file_count": 0,
+            # Set only at creation — cleared by mark_session_active()
+            # once real activity happens. See 10.6 in the graph
+            # structure doc's backlog.
+            "expires_at": datetime.now(timezone.utc) + timedelta(hours=SESSION_TTL_HOURS),
         }
         result = await self._collection.insert_one(doc)
         session_id = str(result.inserted_id)
         logger.info("Created session %s for user %s", session_id, user_id)
         return session_id
+
+    async def mark_session_active(self, session_id: str) -> None:
+        """
+        Called once per chat turn, from chat_service.send_message,
+        BEFORE the graph runs. Cheap and idempotent — only
+        meaningfully mutates on the FIRST call for a session (unsets
+        expires_at); every subsequent call is a harmless no-op
+        update. A session that's actually being used is never
+        auto-deleted.
+        """
+        await self._collection.update_one(
+            {"_id": ObjectId(session_id)},
+            {"$unset": {"expires_at": ""}},
+        )
+
 
     async def get_session(self, session_id: str) -> Optional[dict]:
         """
@@ -108,3 +144,14 @@ class SessionRepository:
         logger.info(
             "Session %s confirmation reset (policy=invalidate)", session_id
         )
+
+    async def list_sessions_for_user(self, user_id: str, limit: int = 50) -> list[dict]:
+        """
+        Returns this user's sessions, most recent first. Used by the
+        sidebar session list — a new capability, no route/consumer
+        existed for this before.
+        """
+        cursor = self._collection.find({"user_id": user_id}).sort(
+            "created_at", -1
+        ).limit(limit)
+        return await cursor.to_list(length=limit)

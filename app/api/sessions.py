@@ -50,3 +50,19 @@ async def get_session_route(
         "uploaded_file_count": session["uploaded_file_count"],
         "created_at": session["created_at"].isoformat(),
     }
+
+@router.get("")
+async def list_sessions_route(
+    db: AsyncDatabase = Depends(get_database),
+    user: UserClaims = Depends(get_current_user),
+):
+    sessions = await session_service.list_sessions(db, user.user_id)
+    return [
+        {
+            "session_id": str(s["_id"]),
+            "created_at": s["created_at"].isoformat(),
+            "document_confirmed": s.get("document_confirmed", False),
+            "uploaded_file_count": s.get("uploaded_file_count", 0),
+        }
+        for s in sessions
+    ]

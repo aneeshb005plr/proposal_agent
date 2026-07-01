@@ -25,3 +25,7 @@ async def get_session_or_raise(
     """
     repo = SessionRepository(db)
     return await repo.get_owned_session(session_id, user_id)
+
+async def list_sessions(db: AsyncDatabase, user_id: str) -> list[dict]:
+    repo = SessionRepository(db)
+    return await repo.list_sessions_for_user(user_id)

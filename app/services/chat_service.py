@@ -20,6 +20,7 @@ from langchain_core.messages import HumanMessage
 from app.agent.context import AgentContext
 from app.agent.graph import build_graph
 from app.repository.message_repository import MessageRepository
+from app.repository.session_repo import SessionRepository
 
 logger = logging.getLogger("app.services.chat_service")
 
@@ -39,7 +40,7 @@ _DEFAULT_OVERWRITE_FIELDS = {
     "post_eval_category": None,
     "post_eval_output_description": None,
     "keep_criteria": None,
-    "keep_criteria_specified": None
+    "keep_criteria_specified": None,
 }
 
 
@@ -49,6 +50,12 @@ async def send_message(
     """Non-streaming — returns the complete reply at once."""
     message_repo = MessageRepository(db)
     await message_repo.add_message(session_id, user_id, "user", message_text)
+
+    # Cheap, idempotent — clears expires_at on the FIRST real message
+    # for a session (10.6: abandoned-session TTL). Every subsequent
+    # call is a harmless no-op update.
+    session_repo = SessionRepository(db)
+    await session_repo.mark_session_active(session_id)
 
     graph = build_graph(checkpointer)
     config = {"configurable": {"thread_id": session_id}}
@@ -84,16 +91,22 @@ async def stream_message(
     db, sync_db, checkpointer, session_id: str, user_id: str, message_text: str
 ):
     """
-    Streaming — yields token chunks as they arrive. Same is_new_thread
-    logic as send_message above, applied consistently.
+    Streaming — yields token chunks as they arrive. Same
+    mark_session_active + is_new_thread logic as send_message above,
+    applied consistently.
 
     KNOWN LIMITATION (confirmed, see graph structure doc Section 7):
     nodes using with_structured_output (request_criteria,
-    recap_and_confirm) will NOT stream token-by-token — the full
-    response arrives at once for those turns.
+    recap_and_confirm, run_evaluation, classify_mid_flow_intent,
+    classify_post_evaluation_intent, handle_criteria_choice) will
+    NOT stream token-by-token — the full response arrives at once
+    for those turns.
     """
     message_repo = MessageRepository(db)
     await message_repo.add_message(session_id, user_id, "user", message_text)
+
+    session_repo = SessionRepository(db)
+    await session_repo.mark_session_active(session_id)
 
     graph = build_graph(checkpointer)
     config = {"configurable": {"thread_id": session_id}}
