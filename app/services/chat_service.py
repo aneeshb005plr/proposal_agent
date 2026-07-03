@@ -21,27 +21,12 @@ from app.agent.context import AgentContext
 from app.agent.graph import build_graph
 from app.repository.message_repository import MessageRepository
 from app.repository.session_repo import SessionRepository
+from app.agent.state import DEFAULT_OVERWRITE_FIELDS as _DEFAULT_OVERWRITE_FIELDS
+
 
 logger = logging.getLogger("app.services.chat_service")
 
-_DEFAULT_OVERWRITE_FIELDS = {
-    "stage": "awaiting_criteria",
-    "criteria": None,
-    "criteria_confirmed": False,
-    "document_confirmed": False,
-    "uploaded_filenames": [],
-    "criteria_weights": {},
-    "validation_violations": [],
-    "scoring_results": None,
-    "executive_summary": None,
-    "intent": None,
-    "response_to_user": None,
-    "mid_flow_category": None,
-    "post_eval_category": None,
-    "post_eval_output_description": None,
-    "keep_criteria": None,
-    "keep_criteria_specified": None,
-}
+
 
 
 async def send_message(

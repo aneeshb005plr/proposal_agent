@@ -30,6 +30,8 @@ from app.agent.nodes.handle_criteria_choice import handle_criteria_choice
 
 from app.agent.nodes.classify_mid_flow_intent import classify_mid_flow_intent
 from app.agent.nodes.update_criteria_mid_flow import update_criteria_mid_flow
+from app.agent.nodes.answer_from_knowledge import answer_from_knowledge
+
 
 
 
@@ -51,6 +53,8 @@ def route_after_classification(state: RFPAnalyzerState) -> str:
         return "handle_social"
     if state["intent"] == "off_topic":
         return "handle_off_topic"
+    if state["intent"] == "knowledge_question":
+        return "answer_from_knowledge"
 
     # task_relevant — defer to stage. Only "awaiting_criteria" has a
     # real node right now; anything else raises clearly rather than
@@ -98,6 +102,7 @@ def build_graph(checkpointer):
     builder.add_node("classify_intent", classify_intent)
     builder.add_node("handle_social", handle_social)
     builder.add_node("handle_off_topic", handle_off_topic)
+    builder.add_node("answer_from_knowledge", answer_from_knowledge)
     builder.add_node("request_criteria", request_criteria)
     builder.add_node("recap_and_confirm", recap_and_confirm)
     builder.add_node("request_document", request_document)
@@ -132,6 +137,7 @@ def build_graph(checkpointer):
         {
             "handle_social": "handle_social",
             "handle_off_topic": "handle_off_topic",
+            "answer_from_knowledge": "answer_from_knowledge",
             "request_criteria": "request_criteria",
             "classify_mid_flow_intent": "classify_mid_flow_intent",
             "handle_criteria_choice": "handle_criteria_choice",
@@ -183,6 +189,7 @@ def build_graph(checkpointer):
 
     builder.add_edge("handle_social", END)
     builder.add_edge("handle_off_topic", END)
+    builder.add_edge("answer_from_knowledge", END)
     builder.add_edge("request_criteria", END)
     builder.add_edge("recap_and_confirm", END)
     builder.add_edge("render_output", END)

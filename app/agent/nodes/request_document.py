@@ -19,23 +19,33 @@
 
 import logging
 
+from langgraph.runtime import Runtime
+
+from app.agent.context import AgentContext
+
 from app.agent.state import RFPAnalyzerState
+from app.repository.session_repository import SessionRepository
+
 
 logger = logging.getLogger("app.agent.nodes.request_document")
 
 
-async def request_document(state: RFPAnalyzerState) -> dict:
+async def request_document(state: RFPAnalyzerState,runtime: Runtime[AgentContext]) -> dict:
     filenames = state.get("uploaded_filenames") or []
 
     if filenames:
+        # FIXED: previously never marked. document_confirmed gates
+        # submission_service's invalidate-on-reupload policy — left
+        # unset, a second real upload silently ADDED chunks instead
+        # of replacing them, blending two unrelated documents into
+        # one evaluation with no warning.
+        session_repo = SessionRepository(runtime.context.db)
+        await session_repo.mark_document_confirmed(state["session_id"])
+
         logger.info(
-            "Document(s) found for session %s: %s — proceeding to "
-            "evaluation in this turn", state["session_id"], filenames,
+            "Document(s) found for session %s: %s — marked confirmed, "
+            "proceeding to evaluation in this turn", state["session_id"], filenames,
         )
-        # Stage advances here; response_to_user is intentionally
-        # left for render_output to set at the end of the evaluation
-        # chain — this node's own message would otherwise be
-        # immediately overwritten anyway, since the turn continues.
         return {"stage": "ready_to_evaluate"}
 
     return {

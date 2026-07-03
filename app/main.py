@@ -20,6 +20,8 @@ from app.repository.message_repository import MessageRepository  # add import
 
 from app.knowledge.risk_words import load_risk_words
 from app.api.router import router
+from app.agent.setup import register_agent_hooks
+
 
 logger = logging.getLogger(__name__)
 
@@ -44,6 +46,8 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
         # — Initialize Checkpointer
         connect_checkpointer(app)
+
+        register_agent_hooks()
 
         # NEW — one-time TTL index setup for the criteria-upload buffer.
         # Must run AFTER connect_to_mongo (needs app.state.mongo_db to exist).

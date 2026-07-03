@@ -52,10 +52,18 @@ The agent is a proposal/RFP evaluation tool. Its current stage in the workflow i
 - "evaluated": expecting a follow-up about a completed evaluation
 
 Categories:
-- social: greetings, thanks, farewells, small talk unrelated to the task
-- off_topic: a request unrelated to evaluating an RFP/proposal against criteria
-- task_relevant: anything related to providing/confirming evaluation criteria, uploading/referencing a document, confirming or adjusting something the agent just asked about, or asking about evaluation results
-
+- social: greetings, thanks, farewells, small talk
+- off_topic: unrelated to evaluating an RFP/proposal OR to general
+  knowledge this agent might have documented (policies, standards,
+  past examples, internal guidance)
+- knowledge_question: the user is asking a factual question that
+  could plausibly be answered from indexed reference material
+  (e.g. "what's our standard fee escalation clause", "do we have a
+  template for X"), rather than progressing the evaluation workflow
+  itself
+- task_relevant: providing/confirming criteria, uploading/referencing
+  a document, confirming/adjusting the current step, or asking about
+  evaluation results already produced
 IMPORTANT: if the latest message plausibly matches what the CURRENT STAGE is expecting (e.g. a list of criteria while awaiting_criteria), classify it task_relevant even if the recent conversation included an unrelated off-topic exchange before it — each message should be judged on its own content first, not on the tone of what came immediately before it.
 
 If genuinely unsure, respond with task_relevant.
