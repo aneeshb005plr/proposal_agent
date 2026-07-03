@@ -113,6 +113,25 @@ async def recap_and_confirm(
 
     if parsed.confirmed:
         logger.info("Criteria confirmed for session %s", state["session_id"])
+        
+        # FIXED: previously always asked for the document, even when
+        # one was ALREADY uploaded (a real, common flow: user
+        # uploads first, then provides criteria afterward). Mirrors
+        # request_document's own same-turn handoff pattern (ADR-R004)
+        # — if the document already exists, act on it immediately
+        # rather than making the user repeat information they've
+        # already given.
+        if state.get("uploaded_filenames"):
+            logger.info(
+                "recap_and_confirm: document(s) already present for "
+                "session %s — proceeding straight to evaluation in "
+                "this turn.", state["session_id"],
+            )
+            return {
+                "criteria_confirmed": True,
+                "stage": "ready_to_evaluate",
+            }
+        
         return {
             "criteria_confirmed": True,
             "stage": "awaiting_document",

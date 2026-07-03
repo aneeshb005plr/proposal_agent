@@ -107,9 +107,27 @@ async def classify_post_evaluation_intent(
         parsed.category, state["session_id"],
     )
 
+    # SAFETY NET (same principle as classify_mid_flow_intent's fix,
+    # but NOT the same behavior — see note below). If a document is
+    # ALREADY uploaded and the model says new_document, this is NOT
+    # necessarily wrong: at stage == "evaluated", "I have a
+    # different document" IS the normal, expected trigger for this
+    # category. Unlike the mid-flow gate, we do NOT force-downgrade
+    # to a different category here — doing so would break the
+    # correct, common case. This is deliberately just a visibility
+    # log, so a genuine misfire pattern would still be noticeable in
+    # logs if it ever starts happening often, without changing
+    # behavior for the expected, correct case.
+    if parsed.category == "new_document" and state.get("uploaded_filenames"):
+        logger.info(
+            "classify_post_evaluation_intent: 'new_document' with "
+            "document(s) already present for session %s — expected "
+            "for this stage, proceeding normally.", state["session_id"],
+        )
+
     return {
-    "post_eval_category": parsed.category,
-    "post_eval_output_description": parsed.additional_output_description,
-    "keep_criteria": parsed.keep_criteria,
-    "keep_criteria_specified": parsed.keep_criteria_specified,
-}
+        "post_eval_category": parsed.category,
+        "post_eval_output_description": parsed.additional_output_description,
+        "keep_criteria": parsed.keep_criteria,
+        "keep_criteria_specified": parsed.keep_criteria_specified,
+    }

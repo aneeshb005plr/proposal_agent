@@ -158,6 +158,15 @@ def build_graph(checkpointer):
     )
 
     builder.add_conditional_edges(
+        "recap_and_confirm",
+        route_after_document_check,   # SAME function already used for request_document — reused, not duplicated
+        {
+            "run_evaluation": "run_evaluation",
+            "wait": END,
+        },
+    )
+
+    builder.add_conditional_edges(
         "request_document",
         route_after_document_check,
         {
@@ -191,7 +200,6 @@ def build_graph(checkpointer):
     builder.add_edge("handle_off_topic", END)
     builder.add_edge("answer_from_knowledge", END)
     builder.add_edge("request_criteria", END)
-    builder.add_edge("recap_and_confirm", END)
     builder.add_edge("render_output", END)
     builder.add_edge("generate_additional_output", END)
     builder.add_edge("reset_for_criteria_change", END)

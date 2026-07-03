@@ -2,10 +2,13 @@
 
 import logging
 
-from fastapi import APIRouter, Depends, HTTPException, UploadFile,Request
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, Request
 
 from app.checkpointer import get_checkpointer
 from pymongo.asynchronous.database import AsyncDatabase
+
+from app.repository.session_repository import SessionRepository
+
 
 from app.auth.claims_resolver import UserClaims, get_current_user
 from app.database import get_database
@@ -17,6 +20,8 @@ from app.repository.session_repository import (
 from app.services import submission_service
 from app.services.submission_service import UploadLimitExceededError
 from typing import Optional, Callable, Awaitable
+from app.services.session_service import get_session_or_raise
+
 
 logger = logging.getLogger("app.api.documents")
 
@@ -39,6 +44,22 @@ async def upload_document_route(
     file_bytes = await file.read()
 
     try:
+        await get_session_or_raise(db, session_id, user.user_id)
+    except (SessionNotFoundError, SessionAccessDeniedError):
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    # FIXED (10.6): previously only chat_service.send_message called
+    # this — a session where the FIRST real activity is a document
+    # upload (not a chat message) was still silently counting down
+    # to auto-deletion the whole time, even though the user had
+    # clearly started using it. Placed right after ownership check,
+    # before any parsing/chunking work — matches where
+    # chat_service.send_message calls it, right at the start of
+    # real activity for the turn.
+    session_repo = SessionRepository(db)
+    await session_repo.mark_session_active(session_id)
+
+    try:
         result = await submission_service.upload_submission_file(
             db, session_id, user.user_id, file.filename, file_bytes
         )
@@ -50,7 +71,7 @@ async def upload_document_route(
 
         result["confirmation_message"] = confirmation_message
         return result
-    
+
     except (SessionNotFoundError, SessionAccessDeniedError):
         raise HTTPException(status_code=404, detail="Session not found")
     except UploadLimitExceededError as e:

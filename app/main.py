@@ -47,7 +47,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         # — Initialize Checkpointer
         connect_checkpointer(app)
 
-        register_agent_hooks()
+        register_agent_hooks() 
 
         # NEW — one-time TTL index setup for the criteria-upload buffer.
         # Must run AFTER connect_to_mongo (needs app.state.mongo_db to exist).
