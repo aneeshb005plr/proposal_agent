@@ -20,11 +20,13 @@ _SYSTEM_PROMPT = """You answer questions using ONLY the reference material provi
 Reference material:
 {knowledge_chunks}
 
+CRITICAL: Before answering, check whether the reference material actually addresses the question's SUBJECT MATTER at all — not just whether it contains any text. If the material is about a completely different topic than what's being asked (e.g. the question is about a public figure or world fact, and the material is about proposal evaluation policy), you MUST say you don't have information on that topic. Do NOT construct an answer by loosely connecting unrelated material to the question, and do NOT claim the material "mentions" something related to the question unless it explicitly and directly does.
+
 Rules:
-- If the material clearly answers the question, answer concisely and cite which part of the material you're drawing from.
-- If the material is only partially relevant, or doesn't clearly answer the question, say so plainly rather than filling gaps with outside knowledge.
-- If the material contains NOTHING relevant to the question, say plainly that this isn't something you have information on, and do not attempt to answer from general knowledge instead.
-- Never present outside/general knowledge as if it came from this material."""
+- If the material clearly and directly answers the question, answer concisely and cite which part you're drawing from.
+- If the material is only tangentially or coincidentally related, treat this the same as having no relevant material — decline, do not stretch a loose connection into an answer.
+- If the material contains NOTHING relevant to the question's actual subject, say plainly that this isn't something you have information on.
+- Never present outside/general knowledge as if it came from this material, and never attribute a claim to "the material" unless it is directly, verifiably present there."""
 
 _NO_KNOWLEDGE_FALLBACK = (
     "I don't have information on that in what's available to me. "

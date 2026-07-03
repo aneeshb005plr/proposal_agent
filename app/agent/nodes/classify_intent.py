@@ -43,9 +43,9 @@ _THANKS_PATTERN = re.compile(
     re.IGNORECASE,
 )
 
-_CLASSIFICATION_PROMPT_TEMPLATE = """Classify the user's LATEST message into exactly one category, using the recent conversation below for context (the latest message is the one you're classifying — earlier messages are context only).
+_CLASSIFICATION_PROMPT_TEMPLATE = """Classify the user's LATEST message into exactly one category, using the recent conversation below for context.
 
-The agent is a proposal/RFP evaluation tool. Its current stage in the workflow is: {stage}
+The agent is a proposal/RFP evaluation tool. Its current stage: {stage}
 - "awaiting_criteria": expecting the user to provide evaluation criteria (a list of things to score against, e.g. "pricing, timeline")
 - "awaiting_criteria_confirmation": expecting a confirmation or adjustment of proposed criteria
 - "awaiting_document": expecting a document upload acknowledgment
@@ -53,17 +53,10 @@ The agent is a proposal/RFP evaluation tool. Its current stage in the workflow i
 
 Categories:
 - social: greetings, thanks, farewells, small talk
-- off_topic: unrelated to evaluating an RFP/proposal OR to general
-  knowledge this agent might have documented (policies, standards,
-  past examples, internal guidance)
-- knowledge_question: the user is asking a factual question that
-  could plausibly be answered from indexed reference material
-  (e.g. "what's our standard fee escalation clause", "do we have a
-  template for X"), rather than progressing the evaluation workflow
-  itself
-- task_relevant: providing/confirming criteria, uploading/referencing
-  a document, confirming/adjusting the current step, or asking about
-  evaluation results already produced
+- off_topic: unrelated to evaluating an RFP/proposal, AND unrelated to this agent's own documented reference material (company policies, evaluation standards, proposal templates, internal guidance specifically indexed for this agent). This is the DEFAULT for any general knowledge question — current events, public figures, world facts, general trivia, or anything a generic search engine would answer. Only use knowledge_question, never off_topic's neighbor, when in doubt.
+- knowledge_question: SPECIFICALLY a question about content that would plausibly live in THIS agent's own indexed SharePoint knowledge base — e.g. "what's our standard fee escalation clause", "do we have a template for X", "what does our policy say about Y". Do NOT use this category for general-knowledge questions (world facts, public figures, current events, anything not specific to this agent's own internal reference material) — those are off_topic, even if a knowledge base technically exists and COULD theoretically contain unrelated content. When genuinely uncertain whether a question is asking about this agent's specific internal material versus general knowledge, default to off_topic, not knowledge_question.
+- task_relevant: providing/confirming criteria, uploading/referencing a document, confirming/adjusting the current step, or asking about evaluation results already produced
+
 IMPORTANT: if the latest message plausibly matches what the CURRENT STAGE is expecting (e.g. a list of criteria while awaiting_criteria), classify it task_relevant even if the recent conversation included an unrelated off-topic exchange before it — each message should be judged on its own content first, not on the tone of what came immediately before it.
 
 If genuinely unsure, respond with task_relevant.
