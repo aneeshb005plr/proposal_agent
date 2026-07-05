@@ -22,6 +22,11 @@ from app.knowledge.risk_words import load_risk_words
 from app.api.router import router
 from app.agent.setup import register_agent_hooks
 
+# ── Add to imports ──────────────────────────────────────────────
+from app.teams.adapter import connect_teams_adapter
+from app.teams.agent_app import configure_agent_app
+from app.repository.teams_conversation_repository import TeamsConversationRepository
+
 
 logger = logging.getLogger(__name__)
 
@@ -61,6 +66,32 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
         message_repo = MessageRepository(app.state.mongo_db)
         await message_repo.setup_indexes()
+
+
+        # Teams SDK bootstrapping
+        connect_teams_adapter(app)
+    
+        teams_conversation_repo = TeamsConversationRepository(app.state.mongo_db)
+        await teams_conversation_repo.ensure_indexes()
+ 
+    
+        # NO SEPARATE wire_dependencies() STEP — db/sync_db/checkpointer
+        # are passed directly, captured via closure inside
+        # configure_agent_app itself. The resulting AgentApplication is
+        # stored on app.state, matching the same accessor pattern used
+        # for the checkpointer (get_checkpointer) and Teams adapter
+        # (get_teams_adapter) — app/api/teams.py reads it back via
+        # get_teams_agent_app(request.app), not a module-level import.
+        app.state.teams_agent_app = configure_agent_app(
+            db=app.state.mongo_db,
+            sync_db=app.state.mongo_sync_db,
+            checkpointer=app.state.checkpointer,
+            options=app.state.teams_options,
+            connection_manager=app.state.teams_connection_manager,
+            authorization=app.state.teams_authorization,
+            attachment_downloader=app.state.teams_attachment_downloader,
+        )
+
 
         app.state.ready = True
         logger.info("%s startup complete", settings.AGENT_NAME)
