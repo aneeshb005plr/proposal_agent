@@ -202,12 +202,34 @@ Port `3978` is the Playground's default expectation — using it avoids having t
 ### Run the Playground, pointed at your local app
 
 ```bash
-agentsplayground -e "http://localhost:3978/api/messages" -c "emulator"
+agentsplayground -e "http://localhost:3978/api/messages" -c "emulator" \
+  --client-id "your-real-TEAMS_APP_ID" \
+  --client-secret "your-real-TEAMS_APP_PASSWORD" \
+  --tenant-id "your-real-TEAMS_TENANT_ID"
 ```
 
-This opens a chat window in your terminal/browser that looks and behaves like a real Teams conversation, but talks directly to your local FastAPI server — **no Azure Bot resource, no tunneling, no Teams tenant needed for this step.**
+This opens a chat window in your terminal/browser that looks and
+behaves like a real Teams conversation, and talks directly to your
+local FastAPI server — **still no devtunnel and no sideloading
+needed for this step**, but real credentials ARE required (see
+above — anonymous mode does not work with this SDK's actual
+construction, confirmed by direct source inspection and real
+failures).
 
-**No auth needed for now.** Per Microsoft's docs: *"For anonymous testing, no other configuration is required."* Skip the `--client-id`/`--client-secret`/`--tenant-id` flags entirely for this first pass — you're testing your own logic, not the auth layer yet.
+Same credentials as your app's own `.env` — you're just also
+telling the Playground's own client to authenticate as the same
+bot when it calls your endpoint.
+
+Alternatively, environment variables work instead of flags (useful
+if you don't want secrets in shell history):
+```bash
+export BOT_ENDPOINT="http://localhost:3978/api/messages"
+export DEFAULT_CHANNEL_ID="emulator"
+export AUTH_CLIENT_ID="your-real-TEAMS_APP_ID"
+export AUTH_CLIENT_SECRET="your-real-TEAMS_APP_PASSWORD"
+export AUTH_TENANT_ID="your-real-TEAMS_TENANT_ID"
+agentsplayground
+```
 
 ### One important flag: the channel ID
 
