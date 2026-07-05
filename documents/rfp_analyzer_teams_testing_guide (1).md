@@ -41,27 +41,29 @@ information in this whole project.
 
 ### Setup
 
-You need a real MongoDB connection (same as any other test in this
-project) but nothing else — no FastAPI, no `microsoft_agents`
-import at all.
+This project already has its own async Mongo client setup
+(`app/database.py`'s `connect_to_mongo`) — reuse that directly
+rather than importing `motor` raw, so this test script uses the
+exact same connection path (pooling, database name resolution,
+etc.) as the real running app, not a separate one-off setup that
+could behave differently.
 
 ```python
 # test_teams_service_manual.py — run with: python test_teams_service_manual.py
-# (or convert to real pytest tests later — this is written as a
-# plain script first so you can see exactly what's happening)
 
 import asyncio
-from motor.motor_asyncio import AsyncIOMotorClient  # or however this project connects async
+from fastapi import FastAPI
 
+from app.database import connect_to_mongo, close_mongo_connection
 from app.services import teams_service
-
-MONGODB_URI = "mongodb://localhost:27017"  # point at your real dev DB
-DB_NAME = "agent_rfp_analyzer"
 
 
 async def main():
-    client = AsyncIOMotorClient(MONGODB_URI)
-    db = client[DB_NAME]
+    # Reuses the SAME connection setup main.py's lifespan uses —
+    # not a separate motor.motor_asyncio.AsyncIOMotorClient() call.
+    app = FastAPI()
+    await connect_to_mongo(app)
+    db = app.state.mongo_db
 
     # Fake a Teams conversation_id and user id — these would
     # normally come from a real Activity, but for this tier we're
@@ -83,21 +85,22 @@ async def main():
     print("Second call correctly resolved to the same session")
 
     # ── Test 3: a plain message actually reaches the real graph ───
-    # NOTE: this call needs checkpointer/sync_db too — pull these
-    # the same way your other test scripts in this project already
-    # do (see rfp_analyzer_test_documentation.md's Prerequisites).
+    # NOTE: this call also needs sync_db/checkpointer — pull these
+    # the same way, from app.state after connect_checkpointer(app)
+    # has also run (see rfp_analyzer_test_documentation.md's
+    # Prerequisites for the full pattern this project already uses).
+    # from app.checkpointer import connect_checkpointer
+    # connect_checkpointer(app)
     # reply = await teams_service.handle_teams_message(
-    #     db=db, sync_db=..., checkpointer=...,
+    #     db=db, sync_db=app.state.mongo_sync_db, checkpointer=app.state.checkpointer,
     #     conversation_id=fake_conversation_id, aad_object_id=fake_aad_object_id,
     #     text="evaluate against: pricing, timeline",
     # )
     # print(f"Reply: {reply}")
 
     # ── Test 4: new-session command works ─────────────────────────
-    reply = await teams_service.handle_teams_message(
-        db=db, sync_db=None, checkpointer=None,  # fill in real ones
-        conversation_id=fake_conversation_id, aad_object_id=fake_aad_object_id,
-        text="new conversation",
+    reply = await teams_service.handle_new_session_command(
+        db, fake_conversation_id, fake_aad_object_id
     )
     print(f"New-session command reply: {reply}")
 
@@ -107,7 +110,7 @@ async def main():
     assert new_session_id != session_id, "Should be a DIFFERENT session now!"
     print(f"Confirmed: new session created ({new_session_id} != {session_id})")
 
-    client.close()
+    await close_mongo_connection(app)
 
 
 asyncio.run(main())
@@ -143,15 +146,56 @@ debugging two things at once.
 
 ### Install the Playground
 
-It's a Node.js tool, not a Python package (your project stays pure Python — this is a separate CLI you install once on your dev machine):
+It's a Node.js tool, not a Python package (your project stays pure Python — this is a separate CLI you install once on your dev machine). The real package name, confirmed against its npm listing — **not** the guessed name from an earlier draft of this guide:
 
 ```bash
-npm install -g @microsoft/agentsplayground
+npm install -g @microsoft/m365agentsplayground
 ```
 
-(Alternatives exist — `winget install agentsplayground` on Windows, or a shell script from Microsoft's GitHub — use whichever fits your setup.)
+Verify it installed correctly:
+```bash
+agentsplayground --version
+```
+
+(There's also an older, deprecated package, `@microsoft/teams-app-test-tool` — its own npm page says outright *"Use @microsoft/m365agentsplayground instead. This package is maintained for backward compatibility."* If you see that name referenced anywhere else, it's the same tool, just the old name.)
+
+### Before you run anything: anonymous vs. real auth mode
+
+**This is the fix for a real error you may hit otherwise** —
+confirmed from a real run: leaving `TEAMS_APP_ID`/`TEAMS_TENANT_ID`
+unset used to crash with `AADSTS900021: Requested tenant identifier
+'00000000-0000-0000-0000-000000000000' is not valid`. That's Azure
+correctly rejecting an attempt at REAL authentication using an
+empty/placeholder tenant — which happened because leaving those
+settings blank did NOT, on its own, tell the SDK to skip real auth.
+
+**This has been fixed** in `app/teams/config.py` —
+`build_agent_auth_configuration()` now explicitly builds an
+**anonymous** configuration (`AgentAuthConfiguration(anonymous_allowed=True, ...)`)
+whenever `TEAMS_APP_ID` isn't set, rather than attempting real Entra
+auth with empty values. This matches the Playground's own
+documented behavior — *"For anonymous testing, no other
+configuration is required."*
+
+**What this means practically:**
+- **Don't set** `TEAMS_APP_ID`/`TEAMS_APP_PASSWORD`/`TEAMS_TENANT_ID`
+  at all for this tier — leave them unset/empty, and your app will
+  correctly configure itself for anonymous mode, matching what the
+  Playground expects for local testing.
+- **Only set them for Tier C+** (a real Azure Bot resource) — at
+  that point the same code automatically switches to real
+  `ClientSecret` auth, since `TEAMS_APP_ID` will now be populated.
+- If you still see the `AADSTS900021`/all-zero-GUID error after this
+  fix, check that your `.env`/settings source doesn't have
+  `TEAMS_APP_ID` set to some placeholder/empty-but-truthy value
+  (like the literal string `"none"` or spaces) — the check is
+  `if not settings.TEAMS_APP_ID`, which treats an empty string or
+  unset value as "use anonymous mode," but a non-empty placeholder
+  string would NOT trigger that path.
 
 ### Run your app
+
+Restart your app after applying the config fix above, so the change actually takes effect:
 
 ```bash
 # From your project root, however you normally start it:
