@@ -1,42 +1,27 @@
-# sdk_inspect_3.py — last remaining piece: how to actually get a
-# bearer token from MsalConnectionManager, now that get_access_token
-# is confirmed NOT to exist. get_token_provider/get_connection are
-# the real candidates — need their signatures and what they return.
+# sdk_inspect_5.py — last check: does MsalConnectionManager.__init__
+# actually consult anonymous_allowed when deciding what to build for
+# a connection, or does it always build a real MsalAuth regardless?
 
 import inspect
 
-
-def show(label, obj):
-    print(f"\n{'=' * 70}\n{label}\n{'=' * 70}")
-    try:
-        print(inspect.signature(obj))
-    except (TypeError, ValueError) as e:
-        print(f"(no signature available: {e})")
-    doc = inspect.getdoc(obj)
-    if doc:
-        print(f"\n--- docstring ---\n{doc[:800]}")
-
-
 from microsoft_agents.authentication.msal import MsalConnectionManager
 
-show("MsalConnectionManager.get_token_provider", MsalConnectionManager.get_token_provider)
-show("MsalConnectionManager.get_connection", MsalConnectionManager.get_connection)
-show("MsalConnectionManager.get_default_connection", MsalConnectionManager.get_default_connection)
-
+print(f"\n{'=' * 70}\nMsalConnectionManager.__init__ — full source\n{'=' * 70}")
 try:
-    from microsoft_agents.hosting.core import AccessTokenProviderBase
-    show("AccessTokenProviderBase", AccessTokenProviderBase)
-    print("\nAccessTokenProviderBase public methods:")
-    for name in dir(AccessTokenProviderBase):
-        if not name.startswith("_"):
-            print(f"  {name}")
-            method = getattr(AccessTokenProviderBase, name, None)
-            if callable(method):
-                try:
-                    print(f"    {inspect.signature(method)}")
-                except (TypeError, ValueError):
-                    pass
-except ImportError as e:
-    print(f"AccessTokenProviderBase import failed: {e}")
+    print(inspect.getsource(MsalConnectionManager.__init__))
+except (TypeError, OSError) as e:
+    print(f"(source not available: {e})")
+
+# Also check MsalAuth.get_access_token's source directly — does IT
+# check anonymous_allowed before calling _get_client(), or does
+# _get_client() run unconditionally (matching the traceback, which
+# showed resolve_tenant_id() failing before any apparent anonymous
+# check)?
+try:
+    from microsoft_agents.authentication.msal import MsalAuth
+    print(f"\n{'=' * 70}\nMsalAuth.get_access_token — full source\n{'=' * 70}")
+    print(inspect.getsource(MsalAuth.get_access_token))
+except Exception as e:
+    print(f"MsalAuth.get_access_token source check failed: {e}")
 
 print("\n\nDONE — paste everything above back.")

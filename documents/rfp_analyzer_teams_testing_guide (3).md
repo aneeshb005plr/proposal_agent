@@ -16,8 +16,8 @@ itself and architecture decisions. This document is purely about
 | Tier | Needs | Proves | Doesn't prove |
 |---|---|---|---|
 | A — Direct unit testing | Nothing (just Python) | Your own logic (session mapping, disambiguation) is correct | Anything about the SDK, Teams, or real network calls |
-| B — Agents Playground | Your app running locally | The SDK wiring, Activity handling, plain-text conversation flow | **File attachments — confirmed impossible to test here** |
-| C — Real Azure Bot + devtunnel | An Azure Bot resource, a devtunnel | Everything, including real Teams file attachments, with your code still running on your own machine | Nothing — this is the closest to real |
+| B — Agents Playground | Your app running locally + **a real Azure Bot resource's credentials** (confirmed required — anonymous mode does not work, see below) | The SDK wiring, Activity handling, plain-text conversation flow | **File attachments — confirmed impossible to test here** |
+| C — Real Azure Bot + devtunnel | The same real Azure Bot resource, plus a devtunnel | Everything, including real Teams file attachments, with your code still running on your own machine | Nothing — this is the closest to real |
 | D — Real deployment (K8s + Ocelot + Teams catalog) | Everything above, working | The actual production path | — |
 
 **Start at Tier A. Only move to the next tier once the current one passes.** Skipping ahead means you can't tell whether a failure is your logic, the SDK wiring, or the network.
@@ -159,39 +159,34 @@ agentsplayground --version
 
 (There's also an older, deprecated package, `@microsoft/teams-app-test-tool` — its own npm page says outright *"Use @microsoft/m365agentsplayground instead. This package is maintained for backward compatibility."* If you see that name referenced anywhere else, it's the same tool, just the old name.)
 
-### Before you run anything: anonymous vs. real auth mode
+### Before you run anything: you need real credentials, even here
 
-**This is the fix for a real error you may hit otherwise** —
-confirmed from a real run: leaving `TEAMS_APP_ID`/`TEAMS_TENANT_ID`
-unset used to crash with `AADSTS900021: Requested tenant identifier
-'00000000-0000-0000-0000-000000000000' is not valid`. That's Azure
-correctly rejecting an attempt at REAL authentication using an
-empty/placeholder tenant — which happened because leaving those
-settings blank did NOT, on its own, tell the SDK to skip real auth.
+**CORRECTION, based on real testing:** an earlier version of this
+guide said anonymous/no-credential testing was possible at this
+tier. That's what Microsoft's own docs claim, but it did NOT hold
+up in practice — confirmed via two separate real failures AND
+direct inspection of the installed SDK's source. `MsalConnectionManager`
+unconditionally wraps every connection in a real `MsalAuth`
+instance and attempts genuine tenant/client resolution, with zero
+reference to any "anonymous" flag anywhere in that path. Whatever
+Microsoft's anonymous mode is meant to do, it doesn't work through
+the construction this project uses.
 
-**This has been fixed** in `app/teams/config.py` —
-`build_agent_auth_configuration()` now explicitly builds an
-**anonymous** configuration (`AgentAuthConfiguration(anonymous_allowed=True, ...)`)
-whenever `TEAMS_APP_ID` isn't set, rather than attempting real Entra
-auth with empty values. This matches the Playground's own
-documented behavior — *"For anonymous testing, no other
-configuration is required."*
+**The practical conclusion: get one real Azure Bot resource — even
+for this tier.** You already have the Terraform module for this
+(see Tier C below for the exact steps) — a free-tier (F0) resource
+costs nothing and takes a few minutes. Set its real
+`TEAMS_APP_ID` / `TEAMS_APP_PASSWORD` / `TEAMS_TENANT_ID` before
+starting your app, for ANY tier from here on, including this one.
+The genuine advantage this tier (the Playground) still has over
+Tier C is **no devtunnel and no sideloading needed** — you still
+don't need a publicly reachable URL or a real Teams client for
+plain-text testing, just real credentials configured.
 
-**What this means practically:**
-- **Don't set** `TEAMS_APP_ID`/`TEAMS_APP_PASSWORD`/`TEAMS_TENANT_ID`
-  at all for this tier — leave them unset/empty, and your app will
-  correctly configure itself for anonymous mode, matching what the
-  Playground expects for local testing.
-- **Only set them for Tier C+** (a real Azure Bot resource) — at
-  that point the same code automatically switches to real
-  `ClientSecret` auth, since `TEAMS_APP_ID` will now be populated.
-- If you still see the `AADSTS900021`/all-zero-GUID error after this
-  fix, check that your `.env`/settings source doesn't have
-  `TEAMS_APP_ID` set to some placeholder/empty-but-truthy value
-  (like the literal string `"none"` or spaces) — the check is
-  `if not settings.TEAMS_APP_ID`, which treats an empty string or
-  unset value as "use anonymous mode," but a non-empty placeholder
-  string would NOT trigger that path.
+If `TEAMS_APP_ID` is left unset, `build_agent_auth_configuration()`
+now raises a clear `ValueError` at startup instead of silently
+attempting a doomed anonymous connection — fail fast and obviously,
+rather than a confusing runtime 500 on the first message.
 
 ### Run your app
 

@@ -13,10 +13,12 @@ from app.config import settings
 logger = logging.getLogger("app.teams.config")
 
 # Connection name used as the dict key passed to MsalConnectionManager
-# — "service_connection" chosen to match the naming convention
-# confirmed in official samples' env var format
-# (CONNECTIONS__SERVICE_CONNECTION__SETTINGS__...).
-SERVICE_CONNECTION_NAME = "service_connection"
+# — CONFIRMED via real testing to need to be UPPERCASE
+# ("SERVICE_CONNECTION"), matching the env-var naming convention
+# from official samples (CONNECTIONS__SERVICE_CONNECTION__SETTINGS__...).
+# An earlier lowercase version ("service_connection") caused a real
+# startup failure — fixed here.
+SERVICE_CONNECTION_NAME = "SERVICE_CONNECTION"
 
 
 def build_agent_auth_configuration() -> AgentAuthConfiguration:
@@ -24,39 +26,36 @@ def build_agent_auth_configuration() -> AgentAuthConfiguration:
     Builds the config MsalConnectionManager expects, sourced from
     this project's existing settings object.
 
-    ANONYMOUS MODE FOR LOCAL TESTING: if TEAMS_APP_ID isn't set (no
-    real Azure Bot resource configured yet — the normal case for
-    Tier A/B local testing per the testing guide), this builds an
-    ANONYMOUS AgentAuthConfiguration instead of a real ClientSecret
-    one. Confirmed root cause of a real error: leaving tenant_id
-    blank/empty and still requesting AuthTypes.client_secret does
-    NOT skip real auth — something in the chain still attempted a
-    genuine OIDC discovery call against a placeholder all-zero GUID
-    tenant (00000000-0000-0000-0000-000000000000), which Azure
-    correctly rejects (AADSTS900021). The SDK's own anonymous_allowed
-    field is the actual, correct way to signal "don't attempt real
-    auth at all" — matching the Agents Playground docs' own claim
-    that anonymous testing needs "no other configuration."
+    NO ANONYMOUS MODE — RETRACTED. An earlier version of this
+    function tried AgentAuthConfiguration(anonymous_allowed=True) to
+    avoid needing real credentials for local Agents Playground
+    testing. CONFIRMED, via direct inspection of real installed SDK
+    source AND two separate real runtime failures, that this does
+    NOT work: MsalConnectionManager.__init__ unconditionally wraps
+    every connection in a real MsalAuth instance regardless of
+    anonymous_allowed, and MsalAuth.get_access_token() unconditionally
+    calls self._get_client(), which attempts real tenant/client
+    resolution with zero reference to anonymous_allowed anywhere in
+    its source. Whatever that field actually controls, it is not
+    this outbound token-acquisition path.
 
-    This means: running against the Agents Playground WITHOUT real
-    Teams credentials configured now works (anonymous mode); running
-    against a REAL Azure Bot resource (Tier C+ in the testing guide)
-    requires TEAMS_APP_ID/TEAMS_APP_PASSWORD/TEAMS_TENANT_ID to
-    actually be set, which switches this back to the real
-    ClientSecret path automatically.
+    CONCLUSION: real TEAMS_APP_ID / TEAMS_APP_PASSWORD / TEAMS_TENANT_ID
+    are required for ANY testing tier, including local Agents
+    Playground testing — not just a real Teams client. Get a real
+    (free-tier F0 is fine) Azure Bot resource via the existing
+    Terraform module and use its real credentials everywhere. See
+    rfp_analyzer_teams_testing_guide.md, which has been corrected to
+    reflect this.
     """
     if not settings.TEAMS_APP_ID:
-        logger.warning(
-            "TEAMS_APP_ID not set — configuring for ANONYMOUS auth "
-            "(local Agents Playground testing only). This will NOT "
-            "work against a real Azure Bot resource — set "
-            "TEAMS_APP_ID / TEAMS_APP_PASSWORD / TEAMS_TENANT_ID "
-            "before testing with a real Teams client (see "
-            "rfp_analyzer_teams_testing_guide.md, Tier C)."
-        )
-        return AgentAuthConfiguration(
-            anonymous_allowed=True,
-            connection_name=SERVICE_CONNECTION_NAME,
+        raise ValueError(
+            "TEAMS_APP_ID is not set. A real Azure Bot resource's "
+            "credentials are required for ANY testing tier, including "
+            "local Agents Playground testing — confirmed via direct "
+            "SDK source inspection that anonymous/no-credential mode "
+            "does not work through MsalConnectionManager. Set "
+            "TEAMS_APP_ID / TEAMS_APP_PASSWORD / TEAMS_TENANT_ID before "
+            "starting this app. See rfp_analyzer_teams_testing_guide.md."
         )
 
     tenant_id = settings.TEAMS_TENANT_ID or settings.ENTRA_TENANT_ID
@@ -67,12 +66,23 @@ def build_agent_auth_configuration() -> AgentAuthConfiguration:
             "Azure Bot resource is registered in a different tenant "
             "than this API's own App Registration."
         )
+    if not tenant_id:
+        raise ValueError(
+            "Neither TEAMS_TENANT_ID nor ENTRA_TENANT_ID is set — a "
+            "real tenant ID is required (this is what caused the "
+            "AADSTS900021 / 'TENANT_ID is not set' errors previously)."
+        )
 
     app_password = (
         settings.TEAMS_APP_PASSWORD.get_secret_value()
         if settings.TEAMS_APP_PASSWORD is not None
         else ""
     )
+    if not app_password:
+        raise ValueError(
+            "TEAMS_APP_PASSWORD is not set — a real client secret is "
+            "required."
+        )
 
     return AgentAuthConfiguration(
         auth_type=AuthTypes.client_secret,
