@@ -1,49 +1,49 @@
-# app/repository/job_repository.py
+# app/auth/authorization.py
 #
-# AGENT-SIDE subset of the worker's own job_repository.py — this
-# agent only ever CREATES jobs (when a user hits POST /knowledge/sync)
-# and READS their status (GET /knowledge/sync/{job_id}). It never
-# claims, processes, or completes jobs — that's exclusively the
-# worker's job. Deliberately duplicated rather than shared as a
-# library (small enough file that duplication is cheaper than
-# maintaining a shared package across repos — same reasoning applied
-# to the document-parser reuse question earlier in this build).
+# Separate from app/auth/claims_resolver.py deliberately — that
+# file's own docstring is explicit that identity and authorization
+# are different concerns, and that this file is where authorization
+# would be added once a real feature needed it. Knowledge sync
+# (especially full_reset, which wipes real data) is that feature.
 
 import logging
-from datetime import datetime, timezone
-from typing import Optional
 
-from bson import ObjectId
+from fastapi import Depends, HTTPException, Request
 from pymongo.asynchronous.database import AsyncDatabase
 
-logger = logging.getLogger("app.repository.job_repository")
+from app.auth.claims_resolver import UserClaims, get_current_user
+from app.config import settings
+from app.database import get_database
 
-JOBS_COLLECTION = "knowledge_sync_jobs"
+logger = logging.getLogger("app.auth.authorization")
 
 
-class JobRepository:
+async def require_admin(
+    user: UserClaims = Depends(get_current_user),
+    db: AsyncDatabase = Depends(get_database),
+) -> UserClaims:
+    """
+    Human-facing admin routes only (POST /knowledge/sync,
+    GET /knowledge/sync/{job_id}). Checks a plain admin_users
+    collection — deliberately NOT Entra App Roles, which need
+    manifest configuration and per-user/group assignment that's
+    often not in place (see claims_resolver.py's own docstring).
+    """
+    is_admin = await db["admin_users"].find_one({"_id": user.user_id})
+    if is_admin is None:
+        raise HTTPException(status_code=403, detail="Admin access required")
+    return user
 
-    def __init__(self, db: AsyncDatabase):
-        self._collection = db[JOBS_COLLECTION]
 
-    async def ensure_indexes(self) -> None:
-        await self._collection.create_index([("status", 1), ("requested_at", 1)])
-
-    async def create(self, agent_id: str, source_id: str, mode: str) -> ObjectId:
-        result = await self._collection.insert_one({
-            "agent_id": agent_id,
-            "source_id": source_id,
-            "mode": mode,
-            "status": "pending",
-            "requested_at": datetime.now(timezone.utc),
-            "started_at": None,
-            "completed_at": None,
-            "heartbeat_at": None,
-            "claimed_by": None,
-            "result": None,
-            "error": None,
-        })
-        return result.inserted_id
-
-    async def get_by_id(self, job_id: ObjectId) -> Optional[dict]:
-        return await self._collection.find_one({"_id": job_id})
+async def require_internal_service(request: Request) -> None:
+    """
+    Machine-to-machine only — the knowledge worker calling
+    POST /internal/documents/process. NOT a user session at all, so
+    this checks a shared secret header instead of any JWT/claims
+    path. Combined with network isolation (this route is never
+    exposed via Ocelot's public routes) as defense in depth, not the
+    only protection.
+    """
+    token = request.headers.get("X-Internal-Token")
+    if not token or token != settings.INTERNAL_SERVICE_TOKEN:
+        raise HTTPException(status_code=403, detail="Not authorized")
