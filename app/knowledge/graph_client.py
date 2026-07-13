@@ -1,6 +1,22 @@
 # app/knowledge/graph_client.py
 #
-# Microsoft Graph REST client for SharePoint knowledge sync.
+# Microsoft Graph REST client for SharePoint access.
+#
+# SCOPE NARROWED — this file previously backed the full knowledge-
+# base sync pipeline (app/knowledge/pipeline.py, now DELETED). That
+# sync logic now lives in the separate, shared knowledge-sync-worker
+# service (see quicksuite_knowledge_worker_design.md), which has its
+# OWN copy of equivalent Graph client logic
+# (knowledge-sync-worker/app/sources/graph_client.py) — deliberate,
+# accepted duplication, same tradeoff already made for the document
+# parser reuse question, not shared as a library.
+#
+# This file's ONLY remaining real consumer is
+# app/knowledge/risk_words.py — which uses it to fetch ONE specific,
+# known file (risk_words.txt), once, at application startup. A
+# narrow, unrelated concern from knowledge-base indexing: loading a
+# compliance guardrail into memory, not syncing a searchable
+# knowledge base.
 #
 # CORRECTED DESIGN — see ADR-A007 in the architecture doc. This uses
 # raw HTTP calls (httpx) against documented Graph REST endpoints,
@@ -48,7 +64,7 @@ class GraphClientNotConfiguredError(Exception):
     GRAPH_CLIENT_ID / GRAPH_CLIENT_SECRET / GRAPH_TENANT_ID /
     SHAREPOINT_SITE_ID have real values filled in. Raised at the
     point of use, not at import time — the rest of the app must be
-    able to boot and run without SharePoint sync configured yet.
+    able to boot and run without SharePoint access configured yet.
     """
     pass
 
@@ -71,15 +87,19 @@ def _require_graph_config() -> None:
     if missing:
         raise GraphClientNotConfiguredError(
             f"Missing required Graph config: {', '.join(missing)}. "
-            f"Fill these in .env before using SharePoint sync."
+            f"Fill these in .env before startup — needed for "
+            f"risk_words.py's load_risk_words() to succeed."
         )
 
 
 class SharePointGraphClient:
     """
-    Manages authentication and Graph API calls for syncing this
-    agent's SharePoint knowledge folder. One instance per agent
-    process — created once, reused across sync runs.
+    Manages authentication and Graph API calls for reading from this
+    agent's SharePoint site. As of the knowledge-sync-worker
+    migration, the ONLY real caller is risk_words.py's
+    load_risk_words() — a single fetch of one known file at startup,
+    not a repeated sync. One instance created at app startup,
+    connect()/disconnect() called once each, per main.py's lifespan.
     """
 
     def __init__(self):
@@ -211,9 +231,12 @@ class SharePointGraphClient:
         last sync (if delta_link is provided from a previous run).
 
         Captures the new delta_link via self.last_delta_link once
-        pagination completes — callers must persist this (in
-        knowledge_sources, per the architecture doc) to enable delta
-        sync on the next run.
+        pagination completes — callers must persist this if they
+        need delta sync on a NEXT run. risk_words.py's own caller
+        (_find_risk_words_item) always passes delta_link=None and
+        does a single full scan each startup, so it never actually
+        uses this persisted value today — kept here regardless, in
+        case a future consumer of this file needs it.
         """
         self.last_delta_link: Optional[str] = None
 
@@ -303,7 +326,16 @@ class SharePointGraphClient:
             return None
         return response.content
 
-    # ── Helpers used by the knowledge pipeline ──────────────────────
+    # ── Helpers, currently UNUSED — kept for now, not deleted ───────
+    #
+    # NOT called anywhere in this file's only remaining real consumer
+    # (risk_words.py uses only iter_changes, download_file,
+    # is_in_knowledge_folder, is_hidden_or_temp). Originally used by
+    # app/knowledge/pipeline.py, which has been deleted — these two
+    # methods are genuinely dead code as of that deletion. Left here
+    # deliberately rather than removed, in case a future real
+    # consumer of this file needs them; revisit if this file is ever
+    # touched again and they're still unused.
 
     @staticmethod
     def compute_content_hash(item: dict, file_bytes: bytes) -> str:
