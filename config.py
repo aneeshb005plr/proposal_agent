@@ -149,6 +149,18 @@ class Settings(BaseSettings):
     # ------------------------------------------------------------------
     CORS_ORIGINS: List[str] = Field(default_factory=lambda: ["*"])
 
+
+    # ------------------------------------------------------------------
+    # Knowledge source encryption — MUST be the SAME literal value as
+    # knowledge-sync-worker's own REGISTRY_ENCRYPTION_KEY setting.
+    # This agent's API encrypts source config secrets at write time
+    # (POST/PATCH /knowledge/sources); the worker decrypts them at
+    # read time when actually running a sync. See
+    # app/security/encryption.py for the full reasoning.
+    # ------------------------------------------------------------------
+
+    REGISTRY_ENCRYPTION_KEY: SecretStr
+
     # ------------------------------------------------------------------
     # Source precedence
     # ------------------------------------------------------------------

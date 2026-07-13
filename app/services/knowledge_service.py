@@ -18,10 +18,95 @@ from app.documents.parser import parse_document
 from app.repository.job_repository import JobRepository
 from app.repository.knowledge_repository import get_knowledge_repository
 from app.repository.source_repository import SourceRepository
+from app.schema.knowledge_source import (
+    CreateSourceRequest,
+    SourceSummaryResponse,
+    UpdateSourceRequest,
+)
+from app.security.encryption import encrypt_secret
 
 logger = logging.getLogger("app.services.knowledge_service")
 
 EMBEDDING_DIMENSIONS = 3072  # unchanged from before
+
+
+class SourceAlreadyExistsError(Exception):
+    pass
+
+
+class SourceNotFoundError(Exception):
+    pass
+
+
+def _encrypt_config_secrets(config: dict, secret_fields: list[str]) -> dict:
+    """Returns a NEW dict — every field named in secret_fields is
+    encrypted and stored under "{field}_encrypted", with the plain
+    key removed. Fields NOT in secret_fields pass through untouched.
+    Generic across source_type — this function has no idea what
+    "graph_client_secret" or any other specific field name means."""
+    result = {k: v for k, v in config.items() if k not in secret_fields}
+    for field in secret_fields:
+        if field in config:
+            result[f"{field}_encrypted"] = encrypt_secret(config[field])
+    return result
+
+
+async def create_source(
+    db: AsyncDatabase, agent_id: str, request: CreateSourceRequest
+) -> None:
+    source_repo = SourceRepository(db)
+    existing = await source_repo.get_raw(agent_id, request.source_id)
+    if existing is not None:
+        raise SourceAlreadyExistsError(
+            f"Source {request.source_id!r} already exists for this agent "
+            f"— use PATCH to update it."
+        )
+
+    encrypted_config = _encrypt_config_secrets(request.config, request.secret_fields)
+    await source_repo.create(
+        agent_id, request.source_id, request.source_type,
+        encrypted_config, request.enabled,
+    )
+    logger.info(
+        "Created knowledge source %r (type=%s) for agent_id=%s",
+        request.source_id, request.source_type, agent_id,
+    )
+
+
+async def update_source(
+    db: AsyncDatabase, agent_id: str, source_id: str, request: UpdateSourceRequest
+) -> None:
+    source_repo = SourceRepository(db)
+    updates: dict = {}
+
+    if request.config is not None:
+        updates["config"] = _encrypt_config_secrets(request.config, request.secret_fields)
+    if request.enabled is not None:
+        updates["enabled"] = request.enabled
+
+    if not updates:
+        logger.info("update_source called for %s with no fields to change", source_id)
+        return
+
+    updated = await source_repo.update(agent_id, source_id, updates)
+    if not updated:
+        raise SourceNotFoundError(f"Source {source_id!r} not found for this agent")
+
+    logger.info("Updated knowledge source %r for agent_id=%s", source_id, agent_id)
+
+
+async def list_sources(db: AsyncDatabase, agent_id: str) -> list[SourceSummaryResponse]:
+    source_repo = SourceRepository(db)
+    docs = await source_repo.list_all(agent_id)
+    return [
+        SourceSummaryResponse(
+            source_id=doc["source_id"],
+            source_type=doc["source_type"],
+            config=doc["config"],  # already stripped of *_encrypted by the repository
+            enabled=doc.get("enabled", True),
+        )
+        for doc in docs
+    ]
 
 
 async def create_sync_jobs(

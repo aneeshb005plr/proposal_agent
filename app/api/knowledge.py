@@ -19,6 +19,11 @@ from app.auth.authorization import require_admin, require_internal_service
 from app.auth.claims_resolver import UserClaims
 from app.config import settings
 from app.database import get_database, get_sync_database
+from app.schema.knowledge_source import (
+    CreateSourceRequest,
+    SourceSummaryResponse,
+    UpdateSourceRequest,
+)
 from app.services import knowledge_service
 
 logger = logging.getLogger("app.api.knowledge")
@@ -68,6 +73,51 @@ async def create_index_route(
     """Unchanged from before — one-time setup, admin-only."""
     await knowledge_service.create_vector_index(sync_db)
     return {"status": "index created"}
+
+
+@router.post("/sources", status_code=201)
+async def create_source_route(
+    body: CreateSourceRequest,
+    db: AsyncDatabase = Depends(get_database),
+    user: UserClaims = Depends(require_admin),
+):
+    """
+    Admin-only. Replaces the manual "insert a document directly into
+    knowledge_sources" step from the earlier end-to-end test —
+    secrets are encrypted here, not by the caller, so the caller
+    only ever sends plain values plus a secret_fields list naming
+    which config keys need encryption. Works for ANY source_type,
+    not just SharePoint.
+    """
+    try:
+        await knowledge_service.create_source(db, settings.AGENT_ID, body)
+    except knowledge_service.SourceAlreadyExistsError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    return {"status": "created", "source_id": body.source_id}
+
+
+@router.patch("/sources/{source_id}")
+async def update_source_route(
+    source_id: str,
+    body: UpdateSourceRequest,
+    db: AsyncDatabase = Depends(get_database),
+    user: UserClaims = Depends(require_admin),
+):
+    try:
+        await knowledge_service.update_source(db, settings.AGENT_ID, source_id, body)
+    except knowledge_service.SourceNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    return {"status": "updated", "source_id": source_id}
+
+
+@router.get("/sources", response_model=list[SourceSummaryResponse])
+async def list_sources_route(
+    db: AsyncDatabase = Depends(get_database),
+    user: UserClaims = Depends(require_admin),
+):
+    """Never includes secrets, encrypted or not — see
+    SourceSummaryResponse's own docstring."""
+    return await knowledge_service.list_sources(db, settings.AGENT_ID)
 
 
 @router.post("/internal/documents/process")
