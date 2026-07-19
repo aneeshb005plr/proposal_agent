@@ -9,6 +9,23 @@
 #     scopes, force_refresh=False) -> str — verified via direct
 #     inspection.
 #
+# AUTH MECHANISM UPDATE (comment only — zero logic change below):
+# this call now transparently acquires its token via User-Assigned
+# Managed Identity rather than a client secret, following the
+# migration in app/teams/config.py. get_connection()/get_access_token()
+# are unaffected — they're the SAME generic AccessTokenProviderBase
+# interface either way; MsalConnectionManager internally routes to
+# ManagedIdentityClient instead of ConfidentialClientApplication
+# based on the auth_type configured, entirely transparent to this
+# file. One real consequence worth knowing: since Managed Identity
+# only works on real Azure compute (IMDS, 169.254.169.254 — not
+# reachable when running locally), this download call — and by
+# extension all real attachment testing — now ALSO requires running
+# on real Azure compute, not just because attachment handling itself
+# was already confirmed untestable via Playground/dev tunnels, but
+# now additionally because token acquisition itself cannot succeed
+# locally at all.
+#
 # CORRECTED after checking real Microsoft Teams file-share docs:
 # Teams attachments for a user SHARING A FILE WITH the bot use a
 # SPECIFIC content type, application/vnd.microsoft.teams.file.download.info,

@@ -99,24 +99,17 @@ class Settings(BaseSettings):
 #     this collapses to one fewer new field.
  
     # ------------------------------------------------------------------
-    # Microsoft Teams (Microsoft 365 Agents SDK)
-    #
-    # TEAMS_TENANT_ID intentionally separate from ENTRA_TENANT_ID for
-    # now, pending confirmation they're the same tenant — if
-    # confirmed, delete this field and have build_teams_sdk_config()
-    # read settings.ENTRA_TENANT_ID directly instead.
-    #
-    # TEAMS_SESSION_STALE_DAYS: our backend's own session lifetime
-    # for a Teams conversation, meant to track your org's actual
-    # Teams chat-clearing policy — mentioned as "around 3 days" but
-    # NOT independently confirmed by us; kept configurable rather
-    # than hardcoded specifically because of that uncertainty.
-    # Change this the moment the real policy value is confirmed
-    # (IT/admin center), no code change needed.
+    # Microsoft Teams (Microsoft 365 Agents SDK) — MIGRATED to User-
+    # Assigned Managed Identity. TEAMS_APP_ID = the Managed Identity's
+    # Client ID (confirmed identical to the Bot resource's own
+    # Microsoft App ID). No client secret exists for this auth type —
+    # TEAMS_APP_PASSWORD has been REMOVED. TEAMS_TENANT_ID is now
+    # genuinely optional (kept only in case a future environment still
+    # uses client_secret auth) — see app/teams/config.py for the
+    # directly-verified reasoning behind all of this.
     # ------------------------------------------------------------------
-    TEAMS_TENANT_ID: str = ""
     TEAMS_APP_ID: str = ""
-    TEAMS_APP_PASSWORD: Optional[SecretStr] = None
+    TEAMS_TENANT_ID: Optional[str] = None
     TEAMS_SESSION_STALE_DAYS: int = 3
 
 

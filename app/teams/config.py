@@ -1,8 +1,58 @@
 # app/teams/config.py
 #
-# Built against confirmed ground truth (AgentAuthConfiguration's
-# real constructor and AuthTypes.client_secret, both verified via
-# direct inspection of the installed package).
+# MIGRATED from client_secret to User-Assigned Managed Identity —
+# the Azure Bot resource (rfp-analyzer-bot-dev) is no longer a
+# client-secret Entra app bot. The client_secret path is fully
+# REPLACED here, not kept as a fallback, given this resource has
+# been reconfigured.
+#
+# VERIFIED directly against the installed SDK's real source
+# (inspect.getsource on MsalAuth._create_client_application — not a
+# secondhand claim):
+#
+#   if AUTH_TYPE in (AuthTypes.user_managed_identity,
+#                     AuthTypes.identity_proxy_manager):
+#       return ManagedIdentityClient(
+#           UserAssignedManagedIdentity(client_id=CLIENT_ID),
+#           http_client=Session(),
+#       )
+#
+# Confirmed: this path reads ONLY client_id. tenant_id, client_secret,
+# authority, and scopes are never referenced anywhere in this branch —
+# confirmed via a full grep of every TENANT_ID reference across
+# MsalAuth's entire source; the authority/tenant-resolution code
+# lives exclusively in the OTHER branch (client_secret/certificate/
+# federated_credentials), never reached for managed identity. The
+# one remaining TENANT_ID reference outside that dead branch
+# (_client_rep, building an internal cache-key string) is
+# functionally harmless whether tenant_id is set or None — confirmed
+# get_access_token() calls self._get_client() with zero arguments,
+# so tenant_id defaults to None all the way through regardless.
+#
+# Also confirmed: AuthTypes.identity_proxy_manager hits the IDENTICAL
+# code path as user_managed_identity — not something the original
+# migration request mentioned, worth knowing even though
+# user_managed_identity is the correct choice here (the Azure
+# resource is confirmed specifically as User-Assigned MI, not IDPM).
+#
+# RUNTIME CONSTRAINT, confirmed general Azure platform behavior, not
+# SDK-specific: ManagedIdentityClient acquires tokens via IMDS
+# (169.254.169.254), which only exists on real Azure compute (AKS,
+# App Service, Container Apps, Azure VM). Managed Identity CANNOT
+# acquire tokens when running locally — expected, not a bug. Local
+# `uvicorn` runs still build configuration and start up successfully;
+# only REAL token acquisition (a real Teams message arriving)
+# requires running on real Azure compute. See
+# rfp_analyzer_teams_testing_guide.md for what this means for local
+# testing (Tier B/C's local-testing assumptions need revisiting given
+# this constraint — flagged there, not silently glossed over).
+#
+# OPEN QUESTION, not yet confirmed either way: does EVERY environment
+# (dev/test/stage/prod) use Managed Identity, or only rfp-analyzer-
+# bot-dev specifically? If any environment still uses client_secret,
+# this file would need a real auth_type branch again, not a full
+# replacement. Confirm before assuming this applies uniformly across
+# all environments.
 
 import logging
 
@@ -15,79 +65,30 @@ logger = logging.getLogger("app.teams.config")
 # Connection name used as the dict key passed to MsalConnectionManager
 # — CONFIRMED via real testing to need to be UPPERCASE
 # ("SERVICE_CONNECTION"), matching the env-var naming convention
-# from official samples (CONNECTIONS__SERVICE_CONNECTION__SETTINGS__...).
-# An earlier lowercase version ("service_connection") caused a real
-# startup failure — fixed here.
+# from official samples.
 SERVICE_CONNECTION_NAME = "SERVICE_CONNECTION"
 
 
 def build_agent_auth_configuration() -> AgentAuthConfiguration:
     """
-    Builds the config MsalConnectionManager expects, sourced from
-    this project's existing settings object.
-
-    NO ANONYMOUS MODE — RETRACTED. An earlier version of this
-    function tried AgentAuthConfiguration(anonymous_allowed=True) to
-    avoid needing real credentials for local Agents Playground
-    testing. CONFIRMED, via direct inspection of real installed SDK
-    source AND two separate real runtime failures, that this does
-    NOT work: MsalConnectionManager.__init__ unconditionally wraps
-    every connection in a real MsalAuth instance regardless of
-    anonymous_allowed, and MsalAuth.get_access_token() unconditionally
-    calls self._get_client(), which attempts real tenant/client
-    resolution with zero reference to anonymous_allowed anywhere in
-    its source. Whatever that field actually controls, it is not
-    this outbound token-acquisition path.
-
-    CONCLUSION: real TEAMS_APP_ID / TEAMS_APP_PASSWORD / TEAMS_TENANT_ID
-    are required for ANY testing tier, including local Agents
-    Playground testing — not just a real Teams client. Get a real
-    (free-tier F0 is fine) Azure Bot resource via the existing
-    Terraform module and use its real credentials everywhere. See
-    rfp_analyzer_teams_testing_guide.md, which has been corrected to
-    reflect this.
+    Managed-identity-only. TEAMS_APP_ID must be set to the Managed
+    Identity's Client ID — confirmed identical to this Bot resource's
+    own Microsoft App ID. This is the ONLY value the SDK's real
+    token-acquisition path actually reads for this auth type; no
+    tenant ID or client secret is used or needed.
     """
     if not settings.TEAMS_APP_ID:
         raise ValueError(
-            "TEAMS_APP_ID is not set. A real Azure Bot resource's "
-            "credentials are required for ANY testing tier, including "
-            "local Agents Playground testing — confirmed via direct "
-            "SDK source inspection that anonymous/no-credential mode "
-            "does not work through MsalConnectionManager. Set "
-            "TEAMS_APP_ID / TEAMS_APP_PASSWORD / TEAMS_TENANT_ID before "
-            "starting this app. See rfp_analyzer_teams_testing_guide.md."
-        )
-
-    tenant_id = settings.TEAMS_TENANT_ID or settings.ENTRA_TENANT_ID
-    if not settings.TEAMS_TENANT_ID:
-        logger.info(
-            "TEAMS_TENANT_ID not explicitly set — falling back to "
-            "ENTRA_TENANT_ID. Set TEAMS_TENANT_ID explicitly if the "
-            "Azure Bot resource is registered in a different tenant "
-            "than this API's own App Registration."
-        )
-    if not tenant_id:
-        raise ValueError(
-            "Neither TEAMS_TENANT_ID nor ENTRA_TENANT_ID is set — a "
-            "real tenant ID is required (this is what caused the "
-            "AADSTS900021 / 'TENANT_ID is not set' errors previously)."
-        )
-
-    app_password = (
-        settings.TEAMS_APP_PASSWORD.get_secret_value()
-        if settings.TEAMS_APP_PASSWORD is not None
-        else ""
-    )
-    if not app_password:
-        raise ValueError(
-            "TEAMS_APP_PASSWORD is not set — a real client secret is "
-            "required."
+            "TEAMS_APP_ID is not set. For User-Assigned Managed "
+            "Identity, this must be the Managed Identity's Client ID "
+            "(confirmed identical to the Bot resource's own Microsoft "
+            "App ID for rfp-analyzer-bot-dev). No tenant ID or client "
+            "secret is used for this auth type — see this module's "
+            "docstring for the directly-verified reasoning."
         )
 
     return AgentAuthConfiguration(
-        auth_type=AuthTypes.client_secret,
+        auth_type=AuthTypes.user_managed_identity,
         client_id=settings.TEAMS_APP_ID,
-        tenant_id=tenant_id,
-        client_secret=app_password,
         connection_name=SERVICE_CONNECTION_NAME,
     )
