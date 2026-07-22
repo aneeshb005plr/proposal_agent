@@ -1,0 +1,45 @@
+{
+  "$schema": "https://developer.microsoft.com/en-us/json-schemas/teams/v1.21/MicrosoftTeams.schema.json",
+  "manifestVersion": "1.21",
+  "version": "1.0.0",
+  "id": "REPLACE-WITH-A-REAL-GUID",
+  "packageName": "com.pwc.rfpanalyzer.dev",
+  "developer": {
+    "name": "REPLACE-WITH-YOUR-COMPANY-NAME",
+    "websiteUrl": "https://REPLACE.example.com",
+    "privacyUrl": "https://REPLACE.example.com/privacy",
+    "termsOfUseUrl": "https://REPLACE.example.com/terms"
+  },
+  "name": {
+    "short": "RFP Analyzer Dev",
+    "full": "RFP Analyzer Dev"
+  },
+  "description": {
+    "short": "Evaluates proposals against your criteria",
+    "full": "RFP Analyzer evaluates proposals and RFP responses against evaluation criteria you provide, producing a scored evaluation table, overall score, and executive summary."
+  },
+  "icons": {
+    "color": "color.png",
+    "outline": "outline.png",
+    "color32x32": "color32.png"
+  },
+  "accentColor": "#004785",
+  "bots": [
+    {
+      "botId": "REPLACE-WITH-MANAGED-IDENTITY-CLIENT-ID",
+      "scopes": ["personal", "copilot"],
+      "supportsFiles": true,
+      "isNotificationOnly": false
+    }
+  ],
+  "copilotAgents": {
+    "customEngineAgents": [
+      {
+        "type": "bot",
+        "id": "REPLACE-WITH-MANAGED-IDENTITY-CLIENT-ID"
+      }
+    ]
+  },
+  "defaultInstallScope": "personal",
+  "validDomains": []
+}

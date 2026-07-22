@@ -55,9 +55,24 @@ def configure_agent_app(
 
     @agent_app.conversation_update("membersAdded")
     async def on_members_added(context: TurnContext, state: TurnState):
+        """
+        Fires when the bot is added to a conversation. Since this
+        agent is PERSONAL SCOPE ONLY (no team/groupChat — see
+        manifest.json's bots[0].scopes), this event realistically
+        only ever fires once per user: when they first add/start a
+        chat with the bot. context.activity.from_property here
+        reliably reflects the HUMAN USER who did that (not the bot
+        itself) — confirmed from real captured Teams payloads earlier
+        in this project (from.name held the real display name, e.g.
+        "Ashish Sood"). No Graph call or extra permission needed.
+
+        Falls back to "there" if name is ever empty/None for some
+        reason, rather than risk a broken "Hi !" greeting.
+        """
+        user_name = context.activity.from_property.name or "there"
         await context.send_activity(
-            "Hi! I'm RFP Analyzer. Share your evaluation criteria, or "
-            "attach a document, whenever you're ready. Send "
+            f"Hi {user_name}! I'm RFP Analyzer. Share your evaluation "
+            f"criteria, or attach a document, whenever you're ready. Send "
             "\"new conversation\" at any point to start a fresh session."
         )
 
