@@ -130,6 +130,10 @@ async def recap_and_confirm(
             return {
                 "criteria_confirmed": True,
                 "stage": "ready_to_evaluate",
+                "response_to_user": (
+                    "Great — criteria confirmed. Since your document is "
+                    "already uploaded, I'll begin the evaluation now."
+                ),
             }
         
         return {

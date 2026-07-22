@@ -32,19 +32,23 @@ from app.agent.nodes.classify_mid_flow_intent import classify_mid_flow_intent
 from app.agent.nodes.update_criteria_mid_flow import update_criteria_mid_flow
 from app.agent.nodes.answer_from_knowledge import answer_from_knowledge
 
+import logging
 
 
 
 
 
-
-
+logger = logging.getLogger("app.agent.graph")
 
 
 def route_after_document_check(state: RFPAnalyzerState) -> str:
-    if state["stage"] == "ready_to_evaluate":
-        return "run_evaluation"
-    return "wait"  # placeholder name for the END branch
+    decision = "run_evaluation" if state["stage"] == "ready_to_evaluate" else "wait"
+    logger.warning(
+        "DIAGNOSTIC route_after_document_check: state['stage']=%r -> %r "
+        "(session=%s)",
+        state.get("stage"), decision, state.get("session_id"),
+    )
+    return decision
 
 
 
@@ -56,6 +60,18 @@ def route_after_classification(state: RFPAnalyzerState) -> str:
     if state["intent"] == "knowledge_question":
         return "answer_from_knowledge"
 
+    # FIXED — defense-in-depth: a session can end up persisted with
+    # stage=="ready_to_evaluate" (confirmed real incident: recap_and_confirm's
+    # same-turn handoff to run_evaluation did not fire as intended,
+    # leaving this stage stuck in the checkpoint into the NEXT turn).
+    # Regardless of how a session ends up here, the correct behavior
+    # on ANY subsequent turn is to just proceed to evaluation — never
+    # crash. This is a real safety net, not just a workaround for one
+    # known bug; any other future path that leaves a session in this
+    # transient state should self-heal the same way.
+    if state["stage"] == "ready_to_evaluate":
+        return "run_evaluation"
+ 
     # task_relevant — defer to stage. Only "awaiting_criteria" has a
     # real node right now; anything else raises clearly rather than
     # silently misrouting, until those nodes are written.
@@ -142,6 +158,7 @@ def build_graph(checkpointer):
             "classify_mid_flow_intent": "classify_mid_flow_intent",
             "handle_criteria_choice": "handle_criteria_choice",
             "classify_post_evaluation_intent": "classify_post_evaluation_intent",
+            "run_evaluation": "run_evaluation",   # NEW — required by the fix above
         },
     )
 
